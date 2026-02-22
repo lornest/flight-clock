@@ -1,0 +1,71 @@
+import { Theme } from "theme.slint";
+
+export component Clock inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <float> hour-angle: 0;
+    in property <float> minute-angle: 0;
+    in property <float> second-angle: 0;
+
+    // Tick marks: 60 lines around the perimeter
+    // Every 5th tick is emphasized (thicker and longer)
+    for i in 60: Rectangle {
+        x: Theme.clock-center - (mod(i, 5) == 0 ? 1px : 0.5px);
+        y: mod(i, 5) == 0 ? 16px : 19px;
+        width: mod(i, 5) == 0 ? 2px : 1px;
+        height: mod(i, 5) == 0 ? 8px : 4px;
+        background: Theme.fg;
+        transform-origin: {
+            x: self.width / 2,
+            y: Theme.clock-center - (mod(i, 5) == 0 ? 16px : 19px)
+        };
+        transform-rotation: i * 6deg;
+    }
+
+    // Hour hand
+    Rectangle {
+        x: Theme.clock-center - 4px;
+        y: Theme.clock-center - Theme.hour-hand-length;
+        width: 8px;
+        height: Theme.hour-hand-length;
+        background: Theme.fg;
+        border-radius: 2px;
+        transform-origin: { x: self.width / 2, y: Theme.hour-hand-length };
+        transform-rotation: root.hour-angle * 1deg;
+    }
+
+    // Minute hand
+    Rectangle {
+        x: Theme.clock-center - 3px;
+        y: Theme.clock-center - Theme.minute-hand-length;
+        width: 6px;
+        height: Theme.minute-hand-length;
+        background: Theme.fg;
+        border-radius: 2px;
+        transform-origin: { x: self.width / 2, y: Theme.minute-hand-length };
+        transform-rotation: root.minute-angle * 1deg;
+    }
+
+    // Second hand
+    Rectangle {
+        x: Theme.clock-center - 1px;
+        y: Theme.clock-center - Theme.second-hand-length;
+        width: 2px;
+        height: Theme.second-hand-length;
+        background: Theme.fg;
+        transform-origin: { x: self.width / 2, y: Theme.second-hand-length };
+        transform-rotation: root.second-angle * 1deg;
+    }
+
+    // Center dot
+    Rectangle {
+        x: Theme.clock-center - 4px;
+        y: Theme.clock-center - 4px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: Theme.fg;
+    }
+}

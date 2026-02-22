@@ -1,0 +1,22 @@
+[Unit]
+Description=FlightClock Display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/flight-clock
+ExecStart=/opt/flight-clock/flight-clock
+Restart=always
+RestartSec=5
+WatchdogSec=120
+StandardOutput=journal
+StandardError=journal
+MemoryMax=64M
+
+# Environment for Slint LinuxKMS backend
+Environment=SLINT_BACKEND=linuxkms
+
+[Install]
+WantedBy=multi-user.target

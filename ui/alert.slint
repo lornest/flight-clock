@@ -1,0 +1,185 @@
+import { Theme } from "theme.slint";
+
+// Data struct for a beacon positioned on the alert screen
+export struct AlertBeacon {
+    hex: string,
+    callsign: string,
+    screen-x: float,
+    screen-y: float,
+    rotation: float,
+    is-new: bool,
+}
+
+// Data struct for flight detail info shown in the center
+export struct AlertFlightDetail {
+    callsign: string,
+    origin-location: string,
+    origin-name: string,
+    destination-location: string,
+    destination-name: string,
+    has-route: bool,
+}
+
+export component Alert inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.alert-bg;
+
+    in property <[AlertBeacon]> beacons: [];
+    in property <[AlertFlightDetail]> flight-details: [];
+
+    callback dismiss();
+
+    // Pulsing ring animation
+    Rectangle {
+        x: 32px;
+        y: 32px;
+        width: Theme.display-size - 64px;
+        height: Theme.display-size - 64px;
+        border-radius: self.width / 2;
+        border-width: 2px;
+        border-color: #ffffff33;
+        opacity: 0.2 + 0.3 * (0.5 + 0.5 * sin(animation-tick() / 1.5s * 360deg));
+    }
+
+    // Background spinning lines (decorative)
+    for i in 8: Rectangle {
+        x: Theme.clock-center - 0.5px;
+        y: 0;
+        width: 1px;
+        height: Theme.display-size;
+        background: #ffffff1a;
+        transform-origin: { x: self.width / 2, y: Theme.clock-center };
+        transform-rotation: i * 45deg + (animation-tick() / 30s * 360deg);
+    }
+
+    // Flight beacons
+    for beacon[idx] in root.beacons: Rectangle {
+        x: Theme.clock-center + beacon.screen-x * 1px - 10px;
+        y: Theme.clock-center + beacon.screen-y * 1px - 10px;
+        width: 20px;
+        height: 20px;
+        background: transparent;
+
+        // Triangle beacon (approximated as rotated diamond)
+        Rectangle {
+            width: 14px;
+            height: 14px;
+            x: 3px;
+            y: 3px;
+            background: Theme.beacon-color;
+            transform-rotation: 45deg + beacon.rotation * 1deg;
+        }
+
+        // Callsign label below beacon
+        if beacon.callsign != "": Text {
+            y: 22px;
+            text: beacon.callsign;
+            color: Theme.beacon-color;
+            font-size: Theme.font-sm;
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Flight detail cards in center
+    VerticalLayout {
+        alignment: center;
+        padding-left: 60px;
+        padding-right: 60px;
+        spacing: 12px;
+
+        for detail[idx] in root.flight-details: Rectangle {
+            background: #ffffff1a;
+            border-radius: 12px;
+            height: detail.has-route ? 120px : 60px;
+            min-width: 300px;
+
+            VerticalLayout {
+                alignment: center;
+                padding: 12px;
+                spacing: 8px;
+
+                // Callsign
+                Text {
+                    text: detail.callsign;
+                    color: Theme.fg;
+                    font-size: Theme.font-3xl;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                // Route: origin -> destination
+                if detail.has-route: HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: detail.origin-location;
+                            color: #ffffffcc;
+                            font-size: Theme.font-xl;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: detail.origin-name;
+                            color: Theme.fg-dim;
+                            font-size: Theme.font-base;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    Text {
+                        text: "\u{2192}";
+                        color: #ffffffb3;
+                        font-size: Theme.font-xl;
+                        vertical-alignment: center;
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: detail.destination-location;
+                            color: #ffffffcc;
+                            font-size: Theme.font-xl;
+                            font-weight: 500;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: detail.destination-name;
+                            color: Theme.fg-dim;
+                            font-size: Theme.font-base;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Close button (top-right)
+    Rectangle {
+        x: Theme.display-size - 48px;
+        y: 16px;
+        width: 32px;
+        height: 32px;
+        border-radius: 16px;
+        background: #ffffff1a;
+
+        Text {
+            text: "\u{00d7}";
+            color: #ffffffb3;
+            font-size: Theme.font-xl;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.dismiss(); }
+        }
+    }
+}

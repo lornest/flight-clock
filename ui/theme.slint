@@ -1,0 +1,37 @@
+// Theme: colors, sizes, and shared styles for the flight clock
+
+export global Theme {
+    // Display dimensions
+    out property <length> display-size: 480px;
+    out property <length> display-radius: 240px;
+
+    // Colors
+    out property <color> bg: #000000;
+    out property <color> fg: #ffffff;
+    out property <color> fg-dim: #ffffff99;
+    out property <color> fg-faint: #ffffff33;
+    out property <color> accent: #3b82f6;       // blue-600
+    out property <color> accent-light: #60a5fa;  // blue-400
+    out property <color> alert-bg: #1e3a5f;      // blue-900
+    out property <color> beacon-color: #fde047;   // yellow-300
+    out property <color> ring-color: #ffffff33;
+
+    // Clock dimensions
+    out property <length> clock-center: 240px;
+    out property <length> hour-hand-length: 120px;
+    out property <length> minute-hand-length: 160px;
+    out property <length> second-hand-length: 180px;
+
+    // Radar
+    out property <length> radar-max-radius: 204px;  // 240 * 0.85
+
+    // Font sizes
+    out property <length> font-xs: 12px;
+    out property <length> font-sm: 14px;
+    out property <length> font-base: 16px;
+    out property <length> font-lg: 20px;
+    out property <length> font-xl: 24px;
+    out property <length> font-2xl: 30px;
+    out property <length> font-3xl: 36px;
+    out property <length> font-4xl: 48px;
+}

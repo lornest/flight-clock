@@ -1,0 +1,244 @@
+import { Theme } from "theme.slint";
+
+struct DirectionOption {
+    value: string,
+    angle: float,
+}
+
+export component DirectionSelector inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: #000000cc;
+    border-radius: Theme.display-radius;
+
+    in property <string> current-direction: "N";
+    callback direction-selected(string);
+    callback close();
+
+    // Background circle
+    Rectangle {
+        x: Theme.clock-center - 210px;
+        y: Theme.clock-center - 210px;
+        width: 420px;
+        height: 420px;
+        border-radius: 210px;
+        border-width: 4px;
+        border-color: #ffffff1a;
+        background: transparent;
+    }
+
+    // N button (0 degrees = top)
+    Rectangle {
+        property <float> btn-angle: -90;
+        property <string> btn-value: "N";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("N"); } }
+    }
+
+    // NE button (45 degrees)
+    Rectangle {
+        property <float> btn-angle: -45;
+        property <string> btn-value: "NE";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("NE"); } }
+    }
+
+    // E button (90 degrees)
+    Rectangle {
+        property <float> btn-angle: 0;
+        property <string> btn-value: "E";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("E"); } }
+    }
+
+    // SE button (135 degrees)
+    Rectangle {
+        property <float> btn-angle: 45;
+        property <string> btn-value: "SE";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("SE"); } }
+    }
+
+    // S button (180 degrees)
+    Rectangle {
+        property <float> btn-angle: 90;
+        property <string> btn-value: "S";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("S"); } }
+    }
+
+    // SW button (225 degrees)
+    Rectangle {
+        property <float> btn-angle: 135;
+        property <string> btn-value: "SW";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("SW"); } }
+    }
+
+    // W button (270 degrees)
+    Rectangle {
+        property <float> btn-angle: 180;
+        property <string> btn-value: "W";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("W"); } }
+    }
+
+    // NW button (315 degrees)
+    Rectangle {
+        property <float> btn-angle: -135;
+        property <string> btn-value: "NW";
+        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
+        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
+        width: 96px;
+        height: 96px;
+        border-radius: 48px;
+        border-width: 2px;
+        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
+        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+
+        Text {
+            text: parent.btn-value;
+            color: Theme.fg;
+            font-size: Theme.font-xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TouchArea { clicked => { root.direction-selected("NW"); } }
+    }
+
+    // Close button at center
+    Rectangle {
+        x: Theme.clock-center - 32px;
+        y: Theme.clock-center - 32px;
+        width: 64px;
+        height: 64px;
+        border-radius: 32px;
+        background: #ffffff1a;
+
+        Text {
+            text: "\u{00d7}";
+            color: #ffffffb3;
+            font-size: Theme.font-4xl;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.close(); }
+        }
+    }
+}

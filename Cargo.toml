@@ -1,0 +1,25 @@
+[package]
+name = "flight-clock"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "Embedded flight tracking clock for Pi Zero 2W with HyperPixel 2.1 Round display"
+
+[dependencies]
+slint = "1.9"
+chrono = "0.4"
+ureq = { version = "2.12", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tiny_http = "0.12"
+indexmap = "2.7"
+
+[build-dependencies]
+slint-build = "1.9"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

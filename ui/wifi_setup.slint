@@ -1,0 +1,68 @@
+import { Theme } from "theme.slint";
+
+export component WifiSetup inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <string> status-text: "Setting up WiFi...";
+    in property <string> ssid: "FlightClock-Setup";
+
+    VerticalLayout {
+        alignment: center;
+        padding: 40px;
+        spacing: 20px;
+
+        // WiFi icon area
+        Rectangle {
+            height: 60px;
+            Text {
+                text: "WiFi Setup";
+                color: Theme.fg;
+                font-size: Theme.font-3xl;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Instructions
+        Text {
+            text: "Connect to WiFi network:";
+            color: Theme.fg-dim;
+            font-size: Theme.font-lg;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        // SSID display
+        Rectangle {
+            height: 60px;
+            border-radius: 12px;
+            background: #ffffff1a;
+            Text {
+                text: root.ssid;
+                color: Theme.accent-light;
+                font-size: Theme.font-2xl;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Step-by-step instructions
+        Text {
+            text: "Then open any webpage\nto configure your network.";
+            color: Theme.fg-dim;
+            font-size: Theme.font-base;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        // Status
+        Text {
+            text: root.status-text;
+            color: Theme.fg-faint;
+            font-size: Theme.font-sm;
+            horizontal-alignment: center;
+        }
+    }
+}

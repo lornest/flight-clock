@@ -82,7 +82,7 @@ export component App inherits Window {
         selected-flight: root.selected-flight-detail;
         beacon-tapped(hex) => { root.radar-beacon-tapped(hex); }
         detail-dismissed => { root.radar-detail-dismissed(); }
-        background-tapped(/* no args */) => { root.screen-tapped(0.0, 0.0); }
+        background-tapped(x, y) => { root.screen-tapped(x, y); }
     }
 
     // Alert overlay (shows over clock when active)

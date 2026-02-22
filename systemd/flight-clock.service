@@ -15,8 +15,11 @@ StandardOutput=journal
 StandardError=journal
 MemoryMax=64M
 
-# Environment for Slint LinuxKMS backend
-Environment=SLINT_BACKEND=linuxkms
+# Slint LinuxKMS backend with software renderer (no GPU/X11/Wayland needed)
+Environment=SLINT_BACKEND=linuxkms-software
+
+# Ensure libinput can find devices for touch input
+Environment=XDG_RUNTIME_DIR=/run/user/0
 
 [Install]
 WantedBy=multi-user.target

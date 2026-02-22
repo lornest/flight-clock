@@ -6,7 +6,7 @@ license = "GPL-3.0"
 description = "Embedded flight tracking clock for Pi Zero 2W with HyperPixel 2.1 Round display"
 
 [dependencies]
-slint = "1.9"
+slint = { version = "1.9", features = ["backend-linuxkms", "renderer-software"] }
 chrono = "0.4"
 ureq = { version = "2.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -115,4 +115,16 @@ impl FlightTracker {
             })
             .collect()
     }
+
+    /// Get all current flights with their cached info.
+    pub fn get_all_flights_with_info(&self) -> Vec<(String, SlimFlight, Option<&FlightInfo>)> {
+        self.current_flights
+            .values()
+            .filter_map(|flight| {
+                let slim = SlimFlight::from_flight(flight)?;
+                let info = self.flight_info.get(&flight.hex);
+                Some((flight.hex.clone(), slim, info))
+            })
+            .collect()
+    }
 }

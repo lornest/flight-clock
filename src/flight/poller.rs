@@ -12,6 +12,7 @@ pub struct FlightState {
     pub flights: Vec<SlimFlight>,
     pub new_flights: Vec<String>,
     pub new_flights_with_info: Vec<NewFlightWithInfo>,
+    pub all_flights_with_info: Vec<NewFlightWithInfo>,
     pub flight_count: usize,
     pub has_new_flights: bool,
 }
@@ -96,10 +97,17 @@ impl Poller {
                         .map(|(hex, slim, info)| NewFlightWithInfo::from_parts(hex, slim, *info))
                         .collect();
 
+                    let all_with_info: Vec<NewFlightWithInfo> = tracker
+                        .get_all_flights_with_info()
+                        .iter()
+                        .map(|(hex, slim, info)| NewFlightWithInfo::from_parts(hex, slim, *info))
+                        .collect();
+
                     let state = FlightState {
                         flights: tracker.get_current_flights(),
                         new_flights: new_ids,
                         new_flights_with_info: new_with_info,
+                        all_flights_with_info: all_with_info,
                         flight_count: tracker.flight_count(),
                         has_new_flights: has_new,
                     };

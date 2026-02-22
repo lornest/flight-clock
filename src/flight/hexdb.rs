@@ -4,6 +4,7 @@ use crate::flight::types::{
 
 const HEXDB_BASE_URL: &str = "https://hexdb.io/api/v1";
 const ADSB_LOL_API_URL: &str = "https://api.adsb.lol/api/0/routeset";
+const ADSB_LOL_AIRPORT_URL: &str = "https://api.adsb.lol/api/0/airport";
 
 /// Fetch flight route from HexDB by ICAO callsign.
 fn fetch_flight_route(flight_number: &str) -> Option<FlightRoute> {
@@ -37,6 +38,36 @@ fn convert_adsb_lol_airport(a: &AdsbLolAirport) -> Airport {
         airport: a.name.clone(),
         latitude: a.lat,
         longitude: a.lon,
+    }
+}
+
+/// Fetch richer airport data from adsb.lol by ICAO code.
+/// Returns location (city) and name (full airport name) that HexDB doesn't provide.
+fn fetch_adsb_lol_airport(icao_code: &str) -> Option<Airport> {
+    let url = format!("{}/{}", ADSB_LOL_AIRPORT_URL, icao_code.trim().to_uppercase());
+
+    let response = ureq::get(&url)
+        .set("User-Agent", "flight-clock-app")
+        .call()
+        .ok()?;
+    if response.status() != 200 {
+        return None;
+    }
+    let data: AdsbLolAirport = response.into_json().ok()?;
+    Some(convert_adsb_lol_airport(&data))
+}
+
+/// Enrich a HexDB airport with richer data from adsb.lol.
+/// Falls back to the original airport if adsb.lol fetch fails.
+fn enrich_airport(airport: Airport) -> Airport {
+    let icao = match &airport.icao {
+        Some(code) if !code.is_empty() => code.clone(),
+        _ => return airport,
+    };
+
+    match fetch_adsb_lol_airport(&icao) {
+        Some(enriched) => enriched,
+        None => airport,
     }
 }
 
@@ -102,8 +133,8 @@ pub fn get_flight_info(flight_number: &str) -> Option<FlightInfo> {
                 });
             }
 
-            let origin = fetch_airport_info(parts[0]);
-            let destination = fetch_airport_info(parts[1]);
+            let origin = fetch_airport_info(parts[0]).map(enrich_airport);
+            let destination = fetch_airport_info(parts[1]).map(enrich_airport);
 
             Some(FlightInfo {
                 flight: clean.to_string(),

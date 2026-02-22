@@ -9,6 +9,7 @@ use config::Config;
 use flight::poller::{FlightState, Poller};
 use utils::geo::{calculate_distance, calculate_plane_rotation, polar_to_screen};
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -90,6 +91,10 @@ fn main() {
         }
     }
 
+    // --- Shared flight details for beacon tap lookup ---
+    let flight_details_map: Arc<Mutex<HashMap<String, FlightDetail>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     // --- Poll interval (shared with poller thread) ---
     let poll_interval = Arc::new(AtomicU64::new(POLL_IDLE));
 
@@ -105,6 +110,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     let wifi_connected_for_poller = _wifi_connected.clone();
 
+    let details_map_for_poller = flight_details_map.clone();
     std::thread::spawn(move || {
         // On Linux, wait for WiFi connection before starting poller
         #[cfg(target_os = "linux")]
@@ -136,10 +142,11 @@ fn main() {
             let facing = facing_clone.lock().unwrap().clone();
             let ui_h = ui_handle.clone();
             let max_nm = max_radius_nm;
+            let details_map = details_map_for_poller.clone();
 
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_h.upgrade() {
-                    update_ui_with_flight_state(&ui, &state, &facing, max_nm);
+                    update_ui_with_flight_state(&ui, &state, &facing, max_nm, &details_map);
                 }
             });
         });
@@ -228,11 +235,14 @@ fn main() {
 
     // --- Radar beacon tap handler ---
     let ui_handle_radar = ui.as_weak();
+    let details_map_for_tap = flight_details_map.clone();
     ui.on_radar_beacon_tapped(move |hex| {
         if let Some(ui) = ui_handle_radar.upgrade() {
+            let hex_str: String = hex.into();
+            if let Some(detail) = details_map_for_tap.lock().unwrap().get(&hex_str) {
+                ui.set_selected_flight_detail(detail.clone());
+            }
             ui.set_show_flight_detail(true);
-            // Detail data is populated via update_ui_with_flight_state
-            let _ = hex; // hex is used to match in the already-set detail
         }
     });
 
@@ -279,14 +289,15 @@ fn update_ui_with_flight_state(
     state: &FlightState,
     facing_direction: &str,
     max_radius_nm: f64,
+    flight_details_map: &Arc<Mutex<HashMap<String, FlightDetail>>>,
 ) {
     let config = Config::load(None);
     let user_lat = config.latitude;
     let user_lon = config.longitude;
 
-    // --- Build radar beacons ---
+    // --- Build radar beacons and flight detail map ---
     let mut radar_beacons: Vec<RadarBeacon> = Vec::new();
-    let mut first_flight_detail: Option<FlightDetail> = None;
+    let mut details: HashMap<String, FlightDetail> = HashMap::new();
 
     for flight in &state.flights {
         let distance_nm = calculate_distance(user_lat, user_lon, flight.lat, flight.lon);
@@ -316,38 +327,39 @@ fn update_ui_with_flight_state(
             distance_nm: distance_nm as f32,
         });
 
-        // Populate detail for first flight (shown when tapped)
-        if first_flight_detail.is_none() {
-            let info = state
-                .new_flights_with_info
-                .iter()
-                .find(|nfi| nfi.hex == flight.hex);
+        // Build detail for every flight using cached route info
+        let info = state
+            .all_flights_with_info
+            .iter()
+            .find(|nfi| nfi.hex == flight.hex);
 
-            let (origin, dest, has_route) = match info {
-                Some(nfi) if nfi.has_route => {
-                    let o = format!("{} ({})", nfi.origin_name, nfi.origin_location);
-                    let d = format!("{} ({})", nfi.destination_name, nfi.destination_location);
-                    (o, d, true)
-                }
-                _ => (String::new(), String::new(), false),
-            };
+        let (origin, dest, has_route) = match info {
+            Some(nfi) if nfi.has_route => {
+                let o = format!("{} ({})", nfi.origin_name, nfi.origin_location);
+                let d = format!("{} ({})", nfi.destination_name, nfi.destination_location);
+                (o, d, true)
+            }
+            _ => (String::new(), String::new(), false),
+        };
 
-            let alt = flight
-                .alt_baro
-                .map(|a| format!("{} ft", a))
-                .unwrap_or_default();
-            let speed = flight
-                .gs
-                .map(|s| format!("{} kts", s as i32))
-                .unwrap_or_default();
-            let (vs_str, vs_dir) = match flight.baro_rate {
-                Some(r) if r > 0 => (format!("{} ft/min", r.abs()), "\u{2197}".to_string()),
-                Some(r) if r < 0 => (format!("{} ft/min", r.abs()), "\u{2198}".to_string()),
-                Some(_) => ("0 ft/min".to_string(), "\u{2192}".to_string()),
-                None => (String::new(), String::new()),
-            };
+        let alt = flight
+            .alt_baro
+            .map(|a| format!("{} ft", a))
+            .unwrap_or_default();
+        let speed = flight
+            .gs
+            .map(|s| format!("{} kts", s as i32))
+            .unwrap_or_default();
+        let (vs_str, vs_dir) = match flight.baro_rate {
+            Some(r) if r > 0 => (format!("{} ft/min", r.abs()), "\u{2197}".to_string()),
+            Some(r) if r < 0 => (format!("{} ft/min", r.abs()), "\u{2198}".to_string()),
+            Some(_) => ("0 ft/min".to_string(), "\u{2192}".to_string()),
+            None => (String::new(), String::new()),
+        };
 
-            first_flight_detail = Some(FlightDetail {
+        details.insert(
+            flight.hex.clone(),
+            FlightDetail {
                 callsign: flight.callsign.clone().into(),
                 hex: flight.hex.clone().into(),
                 origin: origin.into(),
@@ -357,17 +369,16 @@ fn update_ui_with_flight_state(
                 speed: speed.into(),
                 vertical_speed: vs_str.into(),
                 vs_direction: vs_dir.into(),
-            });
-        }
+            },
+        );
     }
 
     let radar_model = std::rc::Rc::new(slint::VecModel::from(radar_beacons));
     ui.set_radar_beacons(radar_model.into());
     ui.set_flight_count(state.flight_count as i32);
 
-    if let Some(detail) = first_flight_detail {
-        ui.set_selected_flight_detail(detail);
-    }
+    // Update shared flight details map for beacon tap lookups
+    *flight_details_map.lock().unwrap() = details;
 
     // --- Handle alert state ---
     if state.has_new_flights {

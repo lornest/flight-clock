@@ -82,7 +82,11 @@ pub struct FlightRoute {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Airport {
     pub country_code: Option<String>,
+    /// Region from HexDB, e.g. "Scotland". Not a city: never shown as one.
     pub region_name: Option<String>,
+    /// City, e.g. "Edinburgh". Only adsb.lol provides this.
+    #[serde(default)]
+    pub city: Option<String>,
     pub iata: Option<String>,
     pub icao: Option<String>,
     pub airport: Option<String>,
@@ -99,11 +103,61 @@ impl Airport {
             .unwrap_or("Unknown")
     }
 
-    pub fn location(&self) -> &str {
-        self.region_name
+    /// The place to show for this airport: the city when we know it, else
+    /// the airport's name without "Airport" ("Edinburgh Airport" ->
+    /// "Edinburgh"). Never the region: HexDB's region is e.g. "Scotland".
+    pub fn location(&self) -> String {
+        if let Some(city) = self.city.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            return city.to_string();
+        }
+        if let Some(name) = self.airport.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            let lower = name.to_ascii_lowercase();
+            let trimmed = if lower.ends_with(" airport") { &name[..name.len() - " airport".len()] } else { name };
+            return trimmed.trim().to_string();
+        }
+        self.iata
             .as_deref()
-            .or(self.country_code.as_deref())
+            .or(self.icao.as_deref())
             .unwrap_or("Unknown")
+            .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Airport;
+
+    fn airport(city: Option<&str>, region: Option<&str>, name: Option<&str>) -> Airport {
+        Airport {
+            country_code: Some("GB".into()),
+            region_name: region.map(Into::into),
+            city: city.map(Into::into),
+            iata: Some("EDI".into()),
+            icao: Some("EGPH".into()),
+            airport: name.map(Into::into),
+            latitude: None,
+            longitude: None,
+        }
+    }
+
+    #[test]
+    fn location_prefers_city() {
+        let a = airport(Some("Edinburgh"), Some("Scotland"), Some("Edinburgh Airport"));
+        assert_eq!(a.location(), "Edinburgh");
+    }
+
+    #[test]
+    fn location_never_uses_region() {
+        // HexDB-only data (adsb.lol unavailable)
+        let a = airport(None, Some("Scotland"), Some("Edinburgh Airport"));
+        assert_eq!(a.location(), "Edinburgh");
+        let a = airport(None, Some("England"), Some("London Heathrow Airport"));
+        assert_eq!(a.location(), "London Heathrow");
+    }
+
+    #[test]
+    fn location_falls_back_to_codes() {
+        assert_eq!(airport(None, Some("Scotland"), None).location(), "EDI");
     }
 }
 

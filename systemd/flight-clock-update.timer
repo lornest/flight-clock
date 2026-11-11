@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily FlightClock update check
+
+[Timer]
+# Early morning, spread over two hours so clocks don't all hit GitHub at once
+OnCalendar=*-*-* 03:00
+RandomizedDelaySec=2h
+# Also check a while after boot, and catch up if the Pi was off at 03:00
+OnBootSec=20min
+Persistent=true
+Unit=flight-clock-update@scheduled.service
+
+[Install]
+WantedBy=timers.target

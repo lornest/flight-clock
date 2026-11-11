@@ -13,6 +13,7 @@
 //! postcodes.io; the clock itself never contacts it.
 
 use crate::config::{config_path, Config};
+use crate::update;
 use crate::wifi::portal::{html_escape, parse_form};
 use std::io::Read;
 use std::path::PathBuf;
@@ -162,6 +163,21 @@ impl SettingsWeb {
                 }
             }
 
+            ("POST", "/update/check") | ("POST", "/update/install") => {
+                if !self.is_authed(&request) {
+                    return redirect(request, "/");
+                }
+                let mode = if path == "/update/install" { update::Mode::Now } else { update::Mode::Check };
+                let banner = match update::trigger(mode) {
+                    Ok(()) if mode == update::Mode::Now => Banner::Info(
+                        "Updating. The clock restarts when it's done; this page will show the result.".into(),
+                    ),
+                    Ok(()) => Banner::Info("Checking for updates...".into()),
+                    Err(e) => Banner::Error(format!("Couldn't start the updater: {}", e)),
+                };
+                respond_html(request, render_settings(&Config::load(None), Some(banner)));
+            }
+
             ("POST", "/forget") => {
                 if let Some(token) = session_token(&request) {
                     let mut state = self.state.lock().unwrap();
@@ -285,6 +301,7 @@ enum CodeResult {
 
 enum Banner {
     Saved,
+    Info(String),
     Error(String),
 }
 
@@ -321,7 +338,14 @@ fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, Str
         return Err("Pick a clock face.".into());
     }
 
+    let channel = field(form, "update_channel");
+    if channel != "stable" && channel != "beta" {
+        return Err("Pick an update channel.".into());
+    }
+
     let mut updated = current.clone();
+    updated.update_channel = channel;
+    updated.auto_update = form.iter().any(|(k, _)| k == "auto_update");
     updated.latitude = (lat * 1e6).round() / 1e6;
     updated.longitude = (lon * 1e6).round() / 1e6;
     updated.radius_nm = (radius * 10.0).round() / 10.0;
@@ -335,9 +359,11 @@ fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, Str
 fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
     let banner = match banner {
         Some(Banner::Saved) => r#"<p class="banner ok">Saved. The clock has updated.</p>"#.to_string(),
+        Some(Banner::Info(msg)) => format!(r#"<p class="banner info">{}</p>"#, html_escape(&msg)),
         Some(Banner::Error(msg)) => format!(r#"<p class="banner error">{}</p>"#, html_escape(&msg)),
         None => String::new(),
     };
+    let updates = render_updates(cfg);
 
     let facing_options: String = FACINGS
         .iter()
@@ -388,8 +414,22 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
     <label class="switch"><input type="checkbox" name="show_date"{date}><span class="track"></span><span>Show the date</span></label>
   </section>
 
+  <section class="card">
+    <h2 class="label">Updates</h2>
+    {updates}
+    <div class="segmented">
+      <label><input type="radio" name="update_channel" value="stable"{stable}><span>Stable</span></label>
+      <label><input type="radio" name="update_channel" value="beta"{beta}><span>Beta</span></label>
+    </div>
+    <label class="switch"><input type="checkbox" name="auto_update"{auto}><span class="track"></span><span>Install updates automatically</span></label>
+  </section>
+
   <button type="submit" class="primary">Save</button>
 </form>
+<div class="row update-actions">
+  <form method="POST" action="/update/check"><button type="submit" class="secondary wide">Check now</button></form>
+  {update_now}
+</div>
 <form method="POST" action="/forget"><button type="submit" class="link">Unpair this phone</button></form>
 <script>
 (function () {{
@@ -433,9 +473,57 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         analog = face_checked("analog"),
         digital = face_checked("digital"),
         date = if cfg.show_date { " checked" } else { "" },
+        updates = updates,
+        stable = if cfg.update_channel != "beta" { " checked" } else { "" },
+        beta = if cfg.update_channel == "beta" { " checked" } else { "" },
+        auto = if cfg.auto_update { " checked" } else { "" },
+        update_now = if update::read_status().is_some_and(|s| s.state == "available" || s.state == "failed") {
+            r#"<form method="POST" action="/update/install"><button type="submit" class="primary">Update now</button></form>"#
+        } else {
+            ""
+        },
     );
 
     page("Settings", &body)
+}
+
+/// Version and last update result, for the Updates card.
+fn render_updates(_cfg: &Config) -> String {
+    let version = format!("<b>FlightClock {}</b>", html_escape(update::VERSION));
+    let Some(status) = update::read_status() else {
+        return format!(r#"<p class="status">{} · <span class="hint">not checked yet</span></p>"#, version);
+    };
+    let when = ago(status.checked_at);
+    let latest = status.latest.as_deref().map(html_escape).unwrap_or_default();
+    let line = match status.state.as_str() {
+        "up_to_date" => format!(r#"<span class="ok">Up to date</span> · checked {}"#, when),
+        "available" => format!(r#"<span class="warn">{} available</span> · checked {}"#, latest, when),
+        "installing" => format!(r#"<span class="warn">Installing {}...</span>"#, latest),
+        "checking" => "Checking...".to_string(),
+        "updated" => format!(r#"<span class="ok">Updated to {}</span> {}"#, latest, when),
+        "failed" => format!(r#"<span class="bad">Last update failed</span> · {}"#, when),
+        other => html_escape(other),
+    };
+    let message = if status.message.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<br><span class="hint">{}</span>"#, html_escape(&status.message))
+    };
+    format!(r#"<p class="status">{}<br>{}{}</p>"#, version, line, message)
+}
+
+fn ago(unix_secs: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let secs = now.saturating_sub(unix_secs);
+    match secs {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{} min ago", secs / 60),
+        3600..=86399 => format!("{} h ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86400),
+    }
 }
 
 fn page(title: &str, body: &str) -> String {
@@ -472,6 +560,9 @@ button{{font:inherit;font-size:16px;border-radius:999px;padding:13px 20px;cursor
 .banner{{border-radius:12px;padding:12px 14px;margin-bottom:16px;border:1px solid}}
 .banner.ok{{color:var(--ok);border-color:#4ADE8066;background:#4ADE8014}}
 .banner.error{{color:var(--error);border-color:#F8717166;background:#F8717114}}
+.banner.info{{color:var(--accent);border-color:#FFB54766;background:#FFB54714}}
+.update-actions{{margin-top:16px;align-items:stretch}}.update-actions form{{flex:1}}.wide{{width:100%}}
+.status{{font-size:15px}}.status b{{font-weight:600}}.status .ok{{color:var(--ok)}}.status .warn{{color:var(--accent)}}.status .bad{{color:var(--error)}}
 .pills{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}}
 .pill input,.segmented input{{position:absolute;opacity:0;pointer-events:none}}
 .pill span{{display:flex;align-items:center;justify-content:center;min-height:48px;border:1px solid var(--line);border-radius:999px;font-weight:600}}
@@ -592,6 +683,8 @@ mod tests {
             ("facing_direction", "NE"),
             ("clock_face", "digital"),
             ("show_date", "on"),
+            ("update_channel", "beta"),
+            ("auto_update", "on"),
         ])
     }
 
@@ -604,6 +697,8 @@ mod tests {
         assert_eq!(cfg.facing_direction, "NE");
         assert_eq!(cfg.clock_face, "digital");
         assert!(cfg.show_date);
+        assert_eq!(cfg.update_channel, "beta");
+        assert!(cfg.auto_update);
     }
 
     #[test]

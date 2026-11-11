@@ -4,6 +4,7 @@ mod config;
 mod flight;
 mod settings_web;
 mod ui_paths;
+mod update;
 mod utils;
 mod watchdog;
 mod wifi;
@@ -67,6 +68,35 @@ struct AlertState {
 }
 
 fn main() {
+    // Subcommands (no UI): `--version`, `update <scheduled|now|check>`
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("--version") | Some("-V") => {
+            println!("flight-clock {}", update::VERSION);
+            return;
+        }
+        Some("update") => {
+            let mode = args.get(2).map(String::as_str).unwrap_or("check");
+            let Some(mode) = update::Mode::parse(mode) else {
+                eprintln!("usage: flight-clock update <scheduled|now|check>");
+                std::process::exit(2);
+            };
+            std::process::exit(match update::run(mode) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("update failed: {}", e);
+                    1
+                }
+            });
+        }
+        Some(other) if other.starts_with('-') || !other.is_empty() => {
+            eprintln!("usage: flight-clock [--version | update <scheduled|now|check>]");
+            std::process::exit(2);
+        }
+        _ => {}
+    }
+
+    eprintln!("flight-clock {}", update::VERSION);
     let config = Config::load(None);
     // Shared so the web settings page can move the clock without a restart
     let location = Arc::new(Mutex::new(config.location()));

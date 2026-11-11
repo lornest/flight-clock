@@ -35,6 +35,12 @@ pub struct Config {
     /// Date panel on the clock faces; toggled from the settings screen
     #[serde(default = "default_show_date")]
     pub show_date: bool,
+    /// "stable" or "beta" (beta also gets pre-releases)
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
+    /// Install updates automatically (daily). Off: only check.
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
 }
 
 fn default_latitude() -> f64 {
@@ -55,6 +61,12 @@ fn default_clock_face() -> String {
 fn default_show_date() -> bool {
     true
 }
+fn default_update_channel() -> String {
+    "stable".to_string()
+}
+fn default_auto_update() -> bool {
+    true
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -65,6 +77,8 @@ impl Default for Config {
             facing_direction: default_facing_direction(),
             clock_face: default_clock_face(),
             show_date: default_show_date(),
+            update_channel: default_update_channel(),
+            auto_update: default_auto_update(),
         }
     }
 }

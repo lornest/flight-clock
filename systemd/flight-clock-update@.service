@@ -1,0 +1,15 @@
+[Unit]
+Description=FlightClock updater (%i)
+Documentation=https://github.com/lornest/flight-clock
+After=network-online.target
+Wants=network-online.target
+# Never run two update jobs at once
+Conflicts=flight-clock-update@scheduled.service flight-clock-update@now.service flight-clock-update@check.service
+
+[Service]
+Type=oneshot
+# %i: scheduled (timer; installs if auto-update is on), now, or check
+ExecStart=/opt/flight-clock/flight-clock update %i
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=15min

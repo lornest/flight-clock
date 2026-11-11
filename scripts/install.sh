@@ -1,36 +1,65 @@
 #!/bin/bash
 set -euo pipefail
 
-# FlightClock installer for Raspberry Pi Zero 2W + HyperPixel 2.1 Round
-# Run as root on the Pi
+# FlightClock installer for Raspberry Pi Zero 2W + HyperPixel 2.1 Round.
+# Run as root on the Pi, from an unpacked release (or with a dev binary).
+#
+#   sudo ./install.sh            # from an unpacked release folder
+#
+# Installs into a versioned layout so the updater can switch and roll back:
+#   /opt/flight-clock/releases/<version>/   binary + scripts
+#   /opt/flight-clock/current -> releases/<version>
+#   /opt/flight-clock/flight-clock -> current/flight-clock   (systemd runs this)
+#
+# Re-running is safe. Set FLIGHT_CLOCK_NONINTERACTIVE=1 to skip prompts
+# (used by get.sh).
 
 INSTALL_DIR="/opt/flight-clock"
 CONFIG_DIR="/etc/flight-clock"
+STATE_DIR="/var/lib/flight-clock"
 SERVICE_NAME="flight-clock"
-BINARY_NAME="flight-clock"
+NONINTERACTIVE="${FLIGHT_CLOCK_NONINTERACTIVE:-0}"
+
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=== FlightClock Installer ==="
 echo ""
 
-# Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
     echo "Error: Must run as root (use sudo)"
     exit 1
 fi
 
-# --- Step 1: Stop old flight-tracker stack if running ---
-echo "[1/7] Stopping old services..."
-# Stop Chromium kiosk / Node.js if present
+# Find the binary: unpacked release, or a dev build copied next to this script / to /tmp
+if [ -f "$SRC_DIR/flight-clock" ]; then
+    BINARY="$SRC_DIR/flight-clock"
+elif [ -f "/tmp/flight-clock" ]; then
+    BINARY="/tmp/flight-clock"
+else
+    echo "Error: flight-clock binary not found next to install.sh or in /tmp."
+    echo "  Use a release: curl -fsSL https://raw.githubusercontent.com/lornest/flight-clock/main/scripts/get.sh | sudo bash"
+    echo "  Or for a dev build: scripts/cross-build.sh, then copy target/pi/flight-clock to /tmp on the Pi."
+    exit 1
+fi
+chmod +x "$BINARY"
+if [ -f "$SRC_DIR/VERSION" ]; then
+    VERSION="$(tr -d '[:space:]' < "$SRC_DIR/VERSION")"
+else
+    VERSION="dev"
+fi
+echo "  Installing version: $VERSION"
+
+# --- Step 1: Stop the old flight-tracker stack if running ---
+echo "[1/8] Stopping old services..."
 systemctl stop chromium-kiosk 2>/dev/null || true
 systemctl disable chromium-kiosk 2>/dev/null || true
 systemctl stop flight-tracker 2>/dev/null || true
 systemctl disable flight-tracker 2>/dev/null || true
-# Kill any lingering chromium/node processes
 killall chromium-browser 2>/dev/null || true
 killall node 2>/dev/null || true
 
-# --- Step 2: Install system dependencies ---
-echo "[2/7] Installing system dependencies..."
+# --- Step 2: System dependencies ---
+echo "[2/8] Installing system dependencies..."
 apt-get update -qq
 # Runtime libraries the binary links against (Slint's linuxkms backend)
 apt-get install -y -qq libinput10 libudev1 libxkbcommon0 libgbm1 libfontconfig1
@@ -52,28 +81,56 @@ fi
 systemctl disable --now hostapd 2>/dev/null || true
 systemctl disable --now dnsmasq 2>/dev/null || true
 
-# --- Step 3: Create directories ---
-echo "[3/7] Creating directories..."
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$CONFIG_DIR"
+# --- Step 3: Directories ---
+echo "[3/8] Creating directories..."
+mkdir -p "$INSTALL_DIR/releases" "$CONFIG_DIR" "$STATE_DIR"
+chmod 700 "$STATE_DIR"
 
-# --- Step 4: Install binary ---
-echo "[4/7] Installing binary..."
-if [ -f "./$BINARY_NAME" ]; then
-    cp "./$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
-elif [ -f "/tmp/$BINARY_NAME" ]; then
-    cp "/tmp/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
-else
-    echo "Error: Binary not found."
-    echo "  Copy it to the Pi first:"
-    echo "    scp target/aarch64-unknown-linux-gnu/release/flight-clock pi@<pi-ip>:/tmp/"
-    echo "  Then run this script again."
-    exit 1
+# --- Step 4: Install this release ---
+echo "[4/8] Installing release $VERSION..."
+RELEASE_DIR="$INSTALL_DIR/releases/$VERSION"
+if [ "$SRC_DIR" != "$RELEASE_DIR" ]; then
+    rm -rf "$RELEASE_DIR.staging"
+    mkdir -p "$RELEASE_DIR.staging"
+    install -m755 "$BINARY" "$RELEASE_DIR.staging/flight-clock"
+    for item in VERSION install.sh setup-hyperpixel2r.sh systemd migrations keys LICENSE README.md CHANGELOG.md; do
+        if [ -e "$SRC_DIR/$item" ]; then
+            cp -a "$SRC_DIR/$item" "$RELEASE_DIR.staging/"
+        fi
+    done
+    # Dev install from the repo's scripts/ folder: unit files live one level up
+    if [ ! -d "$RELEASE_DIR.staging/systemd" ] && [ -d "$SRC_DIR/../systemd" ]; then
+        cp -a "$SRC_DIR/../systemd" "$RELEASE_DIR.staging/"
+    fi
+    rm -rf "$RELEASE_DIR"
+    mv "$RELEASE_DIR.staging" "$RELEASE_DIR"
 fi
-chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
-# --- Step 5: Create config ---
-echo "[5/7] Setting up config..."
+# Keep whatever was current as "previous" (for rollback)
+if [ -L "$INSTALL_DIR/current" ]; then
+    OLD_CURRENT="$(readlink "$INSTALL_DIR/current")"
+    if [ "$OLD_CURRENT" != "releases/$VERSION" ]; then
+        ln -sfn "$OLD_CURRENT" "$INSTALL_DIR/previous"
+    fi
+fi
+ln -sfn "releases/$VERSION" "$INSTALL_DIR/current"
+# Older installs had a plain binary here: replace it with the symlink
+if [ -e "$INSTALL_DIR/flight-clock" ] && [ ! -L "$INSTALL_DIR/flight-clock" ]; then
+    rm -f "$INSTALL_DIR/flight-clock"
+fi
+ln -sfn "current/flight-clock" "$INSTALL_DIR/flight-clock"
+
+# A fresh install already includes everything this release's migrations do
+if [ -d "$RELEASE_DIR/migrations" ]; then
+    for m in "$RELEASE_DIR"/migrations/*.sh; do
+        [ -e "$m" ] || continue
+        name="$(basename "$m")"
+        grep -qxF "$name" "$STATE_DIR/migrations-applied" 2>/dev/null || echo "$name" >> "$STATE_DIR/migrations-applied"
+    done
+fi
+
+# --- Step 5: Config ---
+echo "[5/8] Setting up config..."
 if [ ! -f "$CONFIG_DIR/config.json" ]; then
     cat > "$CONFIG_DIR/config.json" << 'EOF'
 {
@@ -85,52 +142,30 @@ if [ ! -f "$CONFIG_DIR/config.json" ]; then
 EOF
     chmod 644 "$CONFIG_DIR/config.json"
     echo "  Created default config at $CONFIG_DIR/config.json"
-    echo "  >>> Edit this with your coordinates! <<<"
+    echo "  Set your location on the settings page (see below)."
 else
     echo "  Config already exists, keeping it."
 fi
 
-# --- Step 6: Install and enable systemd service ---
-echo "[6/7] Installing systemd service..."
-cat > /etc/systemd/system/flight-clock.service << 'SERVICEEOF'
-[Unit]
-Description=FlightClock Display
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/flight-clock
-ExecStart=/opt/flight-clock/flight-clock
-Restart=always
-RestartSec=5
-WatchdogSec=120
-NotifyAccess=main
-StandardOutput=journal
-StandardError=journal
-MemoryMax=128M
-
-# Slint LinuxKMS backend with software renderer (no GPU/X11/Wayland needed)
-Environment=SLINT_BACKEND=linuxkms-software
-
-# Ensure libinput can find devices for touch input
-Environment=XDG_RUNTIME_DIR=/run/user/0
-
-[Install]
-WantedBy=multi-user.target
-SERVICEEOF
-
+# --- Step 6: systemd units ---
+echo "[6/8] Installing systemd units..."
+for unit in flight-clock.service flight-clock-update@.service flight-clock-update.timer; do
+    if [ -f "$RELEASE_DIR/systemd/$unit" ]; then
+        install -m644 "$RELEASE_DIR/systemd/$unit" "/etc/systemd/system/$unit"
+    else
+        echo "  Warning: $unit not found in $RELEASE_DIR/systemd"
+    fi
+done
 systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
+systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+systemctl enable --now flight-clock-update.timer >/dev/null 2>&1 || true
 
-# --- Step 7: Configure system for headless display ---
-echo "[7/7] Configuring system..."
+# --- Step 7: System settings ---
+echo "[7/8] Configuring system..."
+# No desktop: the clock draws straight to the display
+systemctl set-default multi-user.target >/dev/null 2>&1 || true
 
-# Disable desktop environment if installed (we render directly to framebuffer)
-systemctl set-default multi-user.target 2>/dev/null || true
-
-# Configure journald log rotation
+# Keep logs small
 mkdir -p /etc/systemd/journald.conf.d
 cat > /etc/systemd/journald.conf.d/flight-clock.conf << 'EOF'
 [Journal]
@@ -139,40 +174,44 @@ SystemMaxFileSize=10M
 EOF
 systemctl restart systemd-journald
 
-# Ensure the user running the service can access DRM and input devices
-# (running as root handles this, but add video/input groups for safety)
 usermod -a -G video,input,render root 2>/dev/null || true
 
-echo ""
-echo "============================================"
-echo "  FlightClock installed successfully!"
-echo "============================================"
-echo ""
-echo "  Binary:   $INSTALL_DIR/$BINARY_NAME"
-echo "  Config:   $CONFIG_DIR/config.json"
-echo "  Service:  $SERVICE_NAME"
-echo ""
-echo "  Commands:"
-echo "    sudo nano $CONFIG_DIR/config.json   # edit your location"
-echo "    sudo systemctl start $SERVICE_NAME  # start the clock"
-echo "    sudo systemctl stop $SERVICE_NAME   # stop the clock"
-echo "    sudo journalctl -u $SERVICE_NAME -f # view logs"
-echo ""
+# --- Step 8: Tidy old releases (keep current, previous and dev) ---
+echo "[8/8] Tidying old releases..."
+KEEP_PREV="$(readlink "$INSTALL_DIR/previous" 2>/dev/null || true)"
+for dir in "$INSTALL_DIR"/releases/*; do
+    [ -d "$dir" ] || continue
+    rel="releases/$(basename "$dir")"
+    if [ "$rel" != "releases/$VERSION" ] && [ "$rel" != "$KEEP_PREV" ] && [ "$rel" != "releases/dev" ]; then
+        rm -rf "$dir"
+    fi
+done
 
+HOST="$(hostname 2>/dev/null || echo flight-clock)"
+echo ""
+echo "============================================"
+echo "  FlightClock $VERSION installed"
+echo "============================================"
+echo ""
+echo "  Settings:  http://$HOST.local  (pair your phone with the code on the clock)"
+echo "  Updates:   daily, automatic (change on the settings page)"
+echo "  Logs:      sudo journalctl -u $SERVICE_NAME -f"
+echo ""
 echo "  Display: for a HyperPixel 2.1 Round, also run (once):"
-echo "    sudo ./setup-hyperpixel2r.sh && sudo reboot"
-echo "  It sets up the display and touch, and hides boot text."
+echo "    sudo $RELEASE_DIR/setup-hyperpixel2r.sh && sudo reboot"
 echo ""
 echo "  WiFi: if the Pi isn't on a network at boot, the clock opens a"
 echo "  'FlightClock-Setup' hotspot and shows setup steps on screen."
-echo "  To change WiFi later: double-tap the centre of the clock, then tap WiFi."
-echo "  (Changing WiFi drops any SSH session over WiFi.)"
 echo ""
 
-read -p "Start FlightClock now? [Y/n] " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    systemctl start "$SERVICE_NAME"
-    sleep 2
-    systemctl status "$SERVICE_NAME" --no-pager || true
+if [ "$NONINTERACTIVE" = "1" ]; then
+    systemctl restart "$SERVICE_NAME"
+else
+    read -p "Start FlightClock now? [Y/n] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        systemctl restart "$SERVICE_NAME"
+        sleep 2
+        systemctl status "$SERVICE_NAME" --no-pager || true
+    fi
 fi

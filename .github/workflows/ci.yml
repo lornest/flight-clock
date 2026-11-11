@@ -25,4 +25,7 @@ jobs:
       - run: cargo test --locked
       - run: cargo build --release --locked
       - name: Shell scripts parse
-        run: for f in scripts/*.sh migrations/*.sh; do [ -e "$f" ] && bash -n "$f"; done
+        run: |
+          for f in scripts/*.sh migrations/*.sh; do
+            if [ -e "$f" ]; then bash -n "$f"; fi
+          done

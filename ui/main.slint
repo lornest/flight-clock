@@ -1,11 +1,12 @@
 import { Theme } from "theme.slint";
 import { Clock } from "clock.slint";
 import { Alert, AlertBeacon, AlertFlightDetail } from "alert.slint";
-import { Radar, RadarBeacon, FlightDetail } from "radar.slint";
+import { Radar, RadarBeacon } from "radar.slint";
 import { DirectionSelector } from "direction.slint";
 import { WifiSetup } from "wifi_setup.slint";
+import { Splash } from "splash.slint";
 
-export { AlertBeacon, AlertFlightDetail, RadarBeacon, FlightDetail }
+export { AlertBeacon, AlertFlightDetail, RadarBeacon }
 
 export component App inherits Window {
     title: "FlightClock";
@@ -16,6 +17,10 @@ export component App inherits Window {
 
     // --- State properties set from Rust ---
 
+    // Startup splash, shown until the network question is settled
+    in property <bool> starting-up: true;
+    in property <string> startup-status: "";
+
     // Screen navigation: 0=clock, 1=radar
     in property <int> current-screen: 0;
 
@@ -23,34 +28,40 @@ export component App inherits Window {
     in property <bool> alert-active: false;
     in property <[AlertBeacon]> alert-beacons: [];
     in property <[AlertFlightDetail]> alert-flight-details: [];
+    in property <int> alert-more-count: 0;
 
     // Radar state
     in property <[RadarBeacon]> radar-beacons: [];
     in property <string> facing-direction: "N";
     in property <int> flight-count: 0;
-    in property <bool> show-flight-detail: false;
-    in property <FlightDetail> selected-flight-detail;
+    in property <bool> radar-updating: false;
+    in property <string> radar-error: "";
 
     // Clock hand angles (degrees)
     in property <float> hour-angle: 0;
     in property <float> minute-angle: 0;
     in property <float> second-angle: 0;
 
-    // WiFi setup mode
+    // WiFi
     in property <bool> wifi-setup-mode: false;
     in property <string> wifi-status: "Setting up WiFi...";
+    in property <bool> wifi-status-error: false;
+    in property <bool> wifi-can-cancel: false;
+    in property <string> wifi-network: "";
 
-    // Direction selector
+    // Settings (direction selector + WiFi button)
     in property <bool> show-direction-selector: false;
+
+    property <bool> main-ui: !root.starting-up && !root.wifi-setup-mode;
 
     // --- Callbacks to Rust ---
     callback screen-tapped(float, float);
     callback alert-dismissed();
-    callback radar-beacon-tapped(string);
-    callback radar-detail-dismissed();
     callback direction-selected(string);
     callback direction-selector-closed();
     callback update-clock();
+    callback wifi-setup-requested();
+    callback wifi-setup-cancelled();
 
     // --- 1-second timer for clock updates ---
     Timer {
@@ -61,47 +72,55 @@ export component App inherits Window {
 
     // --- Screen stack ---
 
-    // WiFi setup screen (highest priority)
-    if root.wifi-setup-mode: WifiSetup {
+    if root.starting-up: Splash {
+        status: root.startup-status;
+    }
+
+    // WiFi setup screen
+    if !root.starting-up && root.wifi-setup-mode: WifiSetup {
         status-text: root.wifi-status;
+        status-is-error: root.wifi-status-error;
+        can-cancel: root.wifi-can-cancel;
+        cancel => { root.wifi-setup-cancelled(); }
     }
 
     // Clock screen
-    if !root.wifi-setup-mode && root.current-screen == 0 && !root.alert-active: Clock {
+    if root.main-ui && root.current-screen == 0 && !root.alert-active: Clock {
         hour-angle: root.hour-angle;
         minute-angle: root.minute-angle;
         second-angle: root.second-angle;
     }
 
     // Radar screen
-    if !root.wifi-setup-mode && root.current-screen == 1: Radar {
+    if root.main-ui && root.current-screen == 1: Radar {
         beacons: root.radar-beacons;
         facing-direction: root.facing-direction;
         flight-count: root.flight-count;
-        show-detail: root.show-flight-detail;
-        selected-flight: root.selected-flight-detail;
-        beacon-tapped(hex) => { root.radar-beacon-tapped(hex); }
-        detail-dismissed => { root.radar-detail-dismissed(); }
+        updating: root.radar-updating;
+        error-text: root.radar-error;
         background-tapped(x, y) => { root.screen-tapped(x, y); }
     }
 
     // Alert overlay (shows over clock when active)
-    if !root.wifi-setup-mode && root.alert-active: Alert {
+    if root.main-ui && root.alert-active: Alert {
         beacons: root.alert-beacons;
         flight-details: root.alert-flight-details;
+        more-count: root.alert-more-count;
         dismiss => { root.alert-dismissed(); }
     }
 
-    // Direction selector modal (shows over everything)
-    if root.show-direction-selector: DirectionSelector {
+    // Settings modal (shows over everything)
+    if root.main-ui && root.show-direction-selector: DirectionSelector {
         current-direction: root.facing-direction;
+        wifi-network: root.wifi-network;
         direction-selected(dir) => { root.direction-selected(dir); }
         close => { root.direction-selector-closed(); }
+        wifi-settings => { root.wifi-setup-requested(); }
     }
 
     // Global touch handler (for screen navigation via double-tap)
     // Only active when no modals are shown
-    if !root.show-direction-selector && !root.show-flight-detail && !root.alert-active && root.current-screen == 0 && !root.wifi-setup-mode: TouchArea {
+    if root.main-ui && !root.show-direction-selector && !root.alert-active && root.current-screen == 0: TouchArea {
         clicked => {
             root.screen-tapped(
                 (self.mouse-x - root.width / 2) / 1px,

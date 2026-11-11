@@ -1,0 +1,75 @@
+import { Theme } from "theme.slint";
+
+// Startup screen: a plane crosses the dial, then "Starting up..." fades in.
+// `status` shows what we're waiting on (e.g. joining WiFi) once it's been a while.
+export component Splash inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <string> status: "";
+
+    property <duration> t: animation-tick();
+    property <float> pass: mod(t / 1ms, 3000) / 3000;
+
+    // Plane, top-down, nose pointing right. Built from rectangles so it
+    // renders without any icon font.
+    Rectangle {
+        x: -80px + root.pass * (Theme.display-size + 160px);
+        y: Theme.clock-center - 70px - self.height / 2;
+        width: 72px;
+        height: 64px;
+
+        // Fuselage
+        Rectangle {
+            x: 0;
+            y: parent.height / 2 - 5px;
+            width: 72px;
+            height: 10px;
+            border-radius: 5px;
+            background: Theme.fg;
+        }
+        // Wings
+        Rectangle {
+            x: 30px;
+            y: 0;
+            width: 14px;
+            height: parent.height;
+            border-radius: 4px;
+            background: Theme.fg;
+        }
+        // Tailplane
+        Rectangle {
+            x: 4px;
+            y: parent.height / 2 - 14px;
+            width: 8px;
+            height: 28px;
+            border-radius: 3px;
+            background: Theme.fg;
+        }
+    }
+
+    Text {
+        y: Theme.clock-center - 10px;
+        width: parent.width;
+        text: "Starting up...";
+        color: Theme.fg-dim;
+        font-size: Theme.font-4xl;
+        horizontal-alignment: center;
+        opacity: root.t > 1750ms ? 1 : 0;
+        animate opacity { duration: 500ms; }
+    }
+
+    Text {
+        x: 70px;
+        y: Theme.clock-center + 60px;
+        width: parent.width - 140px;
+        text: root.status;
+        color: Theme.fg-faint;
+        font-size: Theme.font-lg;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+        opacity: root.t > 3000ms ? 1 : 0;
+        animate opacity { duration: 500ms; }
+    }
+}

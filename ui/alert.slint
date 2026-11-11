@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { Arrow, Line } from "shapes.slint";
 
 // Data struct for a beacon positioned on the alert screen
 export struct AlertBeacon {
@@ -18,6 +19,7 @@ export struct AlertFlightDetail {
     destination-location: string,
     destination-name: string,
     has-route: bool,
+    aircraft-type: string,
 }
 
 export component Alert inherits Rectangle {
@@ -27,10 +29,13 @@ export component Alert inherits Rectangle {
 
     in property <[AlertBeacon]> beacons: [];
     in property <[AlertFlightDetail]> flight-details: [];
+    // New flights this alert has picked up beyond the ones shown as cards
+    in property <int> more-count: 0;
 
     callback dismiss();
 
-    // Pulsing ring animation
+    // Ring (static: continuous animation makes the software renderer redraw
+    // the whole screen every frame, which pins a Pi Zero 2W's CPU)
     Rectangle {
         x: 32px;
         y: 32px;
@@ -38,19 +43,18 @@ export component Alert inherits Rectangle {
         height: Theme.display-size - 64px;
         border-radius: self.width / 2;
         border-width: 2px;
-        border-color: #ffffff33;
-        opacity: 0.2 + 0.3 * (0.5 + 0.5 * sin(animation-tick() / 1.5s * 360deg));
+        border-color: #ffffff26;
     }
 
-    // Background spinning lines (decorative)
-    for i in 8: Rectangle {
-        x: Theme.clock-center - 0.5px;
-        y: 0;
-        width: 1px;
-        height: Theme.display-size;
-        background: #ffffff1a;
-        transform-origin: { x: self.width / 2, y: Theme.clock-center };
-        transform-rotation: i * 45deg + (animation-tick() / 30s * 360deg);
+    // Background lines (decorative, static for the same reason)
+    for i in 4: Line {
+        property <float> a: i * 45 + 22.5;
+        x1: 240 - 240 * sin(self.a * 1deg);
+        y1: 240 + 240 * cos(self.a * 1deg);
+        x2: 240 + 240 * sin(self.a * 1deg);
+        y2: 240 - 240 * cos(self.a * 1deg);
+        stroke: #ffffff1a;
+        stroke-width: 1px;
     }
 
     // Flight beacons
@@ -61,14 +65,13 @@ export component Alert inherits Rectangle {
         height: 20px;
         background: transparent;
 
-        // Triangle beacon (approximated as rotated diamond)
-        Rectangle {
-            width: 14px;
-            height: 14px;
-            x: 3px;
-            y: 3px;
-            background: Theme.beacon-color;
-            transform-rotation: 45deg + beacon.rotation * 1deg;
+        // Aircraft marker, pointing in towards the centre
+        Arrow {
+            x: 0;
+            y: 0;
+            size: 20px;
+            angle: beacon.rotation + 180;
+            color: Theme.beacon-color;
         }
 
         // Callsign label below beacon
@@ -92,7 +95,7 @@ export component Alert inherits Rectangle {
         for detail[idx] in root.flight-details: Rectangle {
             background: #ffffff1a;
             border-radius: 12px;
-            height: detail.has-route ? 120px : 60px;
+            height: detail.has-route ? 120px : 92px;
             min-width: 300px;
 
             VerticalLayout {
@@ -157,7 +160,22 @@ export component Alert inherits Rectangle {
                         }
                     }
                 }
+
+                // No route found: show the aircraft type if we have it
+                if !detail.has-route: Text {
+                    text: detail.aircraft-type != "" ? "Aircraft: " + detail.aircraft-type : "Route information unavailable";
+                    color: Theme.fg-dim;
+                    font-size: Theme.font-base;
+                    horizontal-alignment: center;
+                }
             }
+        }
+
+        if root.more-count > 0: Text {
+            text: "+\{root.more-count} more";
+            color: Theme.fg-dim;
+            font-size: Theme.font-base;
+            horizontal-alignment: center;
         }
     }
 

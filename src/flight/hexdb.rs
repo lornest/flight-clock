@@ -10,7 +10,7 @@ const ADSB_LOL_AIRPORT_URL: &str = "https://api.adsb.lol/api/0/airport";
 fn fetch_flight_route(flight_number: &str) -> Option<FlightRoute> {
     let url = format!("{}/route/icao/{}", HEXDB_BASE_URL, flight_number.trim());
 
-    let response = ureq::get(&url).call().ok()?;
+    let response = super::http().get(&url).call().ok()?;
     if response.status() != 200 {
         return None;
     }
@@ -21,7 +21,7 @@ fn fetch_flight_route(flight_number: &str) -> Option<FlightRoute> {
 fn fetch_airport_info(icao_code: &str) -> Option<Airport> {
     let url = format!("{}/airport/icao/{}", HEXDB_BASE_URL, icao_code.trim());
 
-    let response = ureq::get(&url).call().ok()?;
+    let response = super::http().get(&url).call().ok()?;
     if response.status() != 200 {
         return None;
     }
@@ -46,7 +46,7 @@ fn convert_adsb_lol_airport(a: &AdsbLolAirport) -> Airport {
 fn fetch_adsb_lol_airport(icao_code: &str) -> Option<Airport> {
     let url = format!("{}/{}", ADSB_LOL_AIRPORT_URL, icao_code.trim().to_uppercase());
 
-    let response = ureq::get(&url)
+    let response = super::http().get(&url)
         .set("User-Agent", "flight-clock-app")
         .call()
         .ok()?;
@@ -81,7 +81,7 @@ fn fetch_route_from_adsb_lol(callsign: &str) -> Option<FlightInfo> {
         }]
     });
 
-    let response = ureq::post(ADSB_LOL_API_URL)
+    let response = super::http().post(ADSB_LOL_API_URL)
         .set("Accept", "application/json")
         .set("Content-Type", "application/json")
         .send_json(&body)

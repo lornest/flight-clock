@@ -11,9 +11,10 @@ ExecStart=/opt/flight-clock/flight-clock
 Restart=always
 RestartSec=5
 WatchdogSec=120
+NotifyAccess=main
 StandardOutput=journal
 StandardError=journal
-MemoryMax=64M
+MemoryMax=128M
 
 # Slint LinuxKMS backend with software renderer (no GPU/X11/Wayland needed)
 Environment=SLINT_BACKEND=linuxkms-software

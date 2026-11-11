@@ -6,36 +6,37 @@ export component WifiSetup inherits Rectangle {
     background: Theme.bg;
 
     in property <string> status-text: "Setting up WiFi...";
+    in property <bool> status-is-error: false;
+    in property <bool> can-cancel: false;
     in property <string> ssid: "FlightClock-Setup";
+    in property <string> portal-address: "192.168.4.1";
 
+    callback cancel();
+
+    // Content is kept inside the round display's safe area.
     VerticalLayout {
         alignment: center;
-        padding: 40px;
-        spacing: 20px;
+        padding-left: 64px;
+        padding-right: 64px;
+        spacing: 12px;
 
-        // WiFi icon area
-        Rectangle {
-            height: 60px;
-            Text {
-                text: "WiFi Setup";
-                color: Theme.fg;
-                font-size: Theme.font-3xl;
-                horizontal-alignment: center;
-            }
+        Text {
+            text: "WiFi Setup";
+            color: Theme.fg;
+            font-size: Theme.font-3xl;
+            font-weight: 700;
+            horizontal-alignment: center;
         }
 
-        // Instructions
         Text {
-            text: "Connect to WiFi network:";
+            text: "On your phone, join:";
             color: Theme.fg-dim;
             font-size: Theme.font-lg;
             horizontal-alignment: center;
-            wrap: word-wrap;
         }
 
-        // SSID display
         Rectangle {
-            height: 60px;
+            height: 52px;
             border-radius: 12px;
             background: #ffffff1a;
             Text {
@@ -48,21 +49,43 @@ export component WifiSetup inherits Rectangle {
             }
         }
 
-        // Step-by-step instructions
         Text {
-            text: "Then open any webpage\nto configure your network.";
+            text: "The setup page should open by itself.\nIf not, go to " + root.portal-address;
             color: Theme.fg-dim;
             font-size: Theme.font-base;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
 
-        // Status
         Text {
             text: root.status-text;
-            color: Theme.fg-faint;
-            font-size: Theme.font-sm;
+            color: root.status-is-error ? #f87171 : Theme.fg-dim;
+            font-size: Theme.font-base;
+            font-weight: root.status-is-error ? 600 : 400;
             horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.can-cancel: HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 200px;
+                height: 44px;
+                border-radius: 22px;
+                background: cancel-touch.pressed ? #ffffff33 : #ffffff1a;
+                border-width: 1px;
+                border-color: #ffffff4d;
+                Text {
+                    text: "Use saved WiFi";
+                    color: Theme.fg;
+                    font-size: Theme.font-base;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                cancel-touch := TouchArea {
+                    clicked => { root.cancel(); }
+                }
+            }
         }
     }
 }

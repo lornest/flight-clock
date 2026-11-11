@@ -12,8 +12,11 @@ export component DirectionSelector inherits Rectangle {
     border-radius: Theme.display-radius;
 
     in property <string> current-direction: "N";
+    // Network the clock is on, shown on the WiFi button
+    in property <string> wifi-network: "";
     callback direction-selected(string);
     callback close();
+    callback wifi-settings();
 
     // Background circle
     Rectangle {
@@ -239,6 +242,33 @@ export component DirectionSelector inherits Rectangle {
 
         TouchArea {
             clicked => { root.close(); }
+        }
+    }
+
+    // WiFi settings button, between the close button and S
+    Rectangle {
+        x: Theme.clock-center - 80px;
+        y: Theme.clock-center + 46px;
+        width: 160px;
+        height: 40px;
+        border-radius: 20px;
+        background: wifi-touch.pressed ? #ffffff33 : #ffffff1a;
+        border-width: 1px;
+        border-color: #ffffff4d;
+
+        Text {
+            x: 10px;
+            width: parent.width - 20px;
+            text: root.wifi-network != "" ? "WiFi: " + root.wifi-network : "WiFi settings";
+            color: Theme.fg;
+            font-size: Theme.font-sm;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        wifi-touch := TouchArea {
+            clicked => { root.wifi-settings(); }
         }
     }
 }

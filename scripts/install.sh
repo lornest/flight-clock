@@ -32,18 +32,25 @@ killall node 2>/dev/null || true
 # --- Step 2: Install system dependencies ---
 echo "[2/7] Installing system dependencies..."
 apt-get update -qq
-apt-get install -y -qq \
-    libinput10 \
-    libudev1 \
-    hostapd \
-    dnsmasq \
-    wireless-tools
+# Runtime libraries the binary links against (Slint's linuxkms backend)
+apt-get install -y -qq libinput10 libudev1 libxkbcommon0 libgbm1 libfontconfig1
 
-# Disable hostapd and dnsmasq by default (managed by our app)
-systemctl disable hostapd 2>/dev/null || true
-systemctl stop hostapd 2>/dev/null || true
-systemctl disable dnsmasq 2>/dev/null || true
-systemctl stop dnsmasq 2>/dev/null || true
+# WiFi setup hotspot. The app uses NetworkManager when it's running (Pi OS
+# Bookworm and later), else wpa_supplicant + hostapd + dnsmasq.
+if systemctl is-active --quiet NetworkManager; then
+    echo "  NetworkManager detected"
+    # NM's "shared" mode runs its own dnsmasq for the hotspot's DHCP/DNS
+    apt-get install -y -qq dnsmasq-base
+else
+    echo "  NetworkManager not running; using wpa_supplicant/hostapd"
+    apt-get install -y -qq hostapd dnsmasq wireless-tools
+fi
+
+# The app starts hostapd/dnsmasq itself when needed. A system-wide dnsmasq
+# (e.g. left over from the old flight-tracker hotspot script) would hold
+# ports 53/67 and break the setup hotspot.
+systemctl disable --now hostapd 2>/dev/null || true
+systemctl disable --now dnsmasq 2>/dev/null || true
 
 # --- Step 3: Create directories ---
 echo "[3/7] Creating directories..."
@@ -99,9 +106,10 @@ ExecStart=/opt/flight-clock/flight-clock
 Restart=always
 RestartSec=5
 WatchdogSec=120
+NotifyAccess=main
 StandardOutput=journal
 StandardError=journal
-MemoryMax=64M
+MemoryMax=128M
 
 # Slint LinuxKMS backend with software renderer (no GPU/X11/Wayland needed)
 Environment=SLINT_BACKEND=linuxkms-software
@@ -149,6 +157,16 @@ echo "    sudo nano $CONFIG_DIR/config.json   # edit your location"
 echo "    sudo systemctl start $SERVICE_NAME  # start the clock"
 echo "    sudo systemctl stop $SERVICE_NAME   # stop the clock"
 echo "    sudo journalctl -u $SERVICE_NAME -f # view logs"
+echo ""
+
+echo "  Display: for a HyperPixel 2.1 Round, also run (once):"
+echo "    sudo ./setup-hyperpixel2r.sh && sudo reboot"
+echo "  It sets up the display and touch, and hides boot text."
+echo ""
+echo "  WiFi: if the Pi isn't on a network at boot, the clock opens a"
+echo "  'FlightClock-Setup' hotspot and shows setup steps on screen."
+echo "  To change WiFi later: double-tap the centre of the clock, then tap WiFi."
+echo "  (Changing WiFi drops any SSH session over WiFi.)"
 echo ""
 
 read -p "Start FlightClock now? [Y/n] " -n 1 -r

@@ -1,5 +1,8 @@
 import { Theme } from "theme.slint";
+import { Spoke } from "shapes.slint";
 
+// Analogue clock. Drawn with paths rather than rotated rectangles: the
+// software renderer on the Pi doesn't support transform-rotation.
 export component Clock inherits Rectangle {
     width: Theme.display-size;
     height: Theme.display-size;
@@ -9,63 +12,62 @@ export component Clock inherits Rectangle {
     in property <float> minute-angle: 0;
     in property <float> second-angle: 0;
 
-    // Tick marks: 60 lines around the perimeter
-    // Every 5th tick is emphasized (thicker and longer)
-    for i in 60: Rectangle {
-        x: Theme.clock-center - (mod(i, 5) == 0 ? 1px : 0.5px);
-        y: mod(i, 5) == 0 ? 16px : 19px;
-        width: mod(i, 5) == 0 ? 2px : 1px;
-        height: mod(i, 5) == 0 ? 8px : 4px;
-        background: Theme.fg;
-        transform-origin: {
-            x: self.width / 2,
-            y: Theme.clock-center - (mod(i, 5) == 0 ? 16px : 19px)
-        };
-        transform-rotation: i * 6deg;
+    // Tick marks: 60 around the edge, every 5th longer and thicker.
+    // Coordinates precomputed for a 480x480 dial centred at (240, 240).
+    Path {
+        x: 0;
+        y: 0;
+        width: Theme.display-size;
+        height: Theme.display-size;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 480;
+        viewbox-height: 480;
+        stroke: Theme.fg;
+        stroke-width: 1px;
+        commands: "M 263.1 20.2 L 262.7 24.2 M 285.9 23.8 L 285.1 27.7 M 308.3 29.8 L 307.1 33.6 M 329.9 38.1 L 328.3 41.8 M 369.9 61.2 L 367.5 64.4 M 387.9 75.8 L 385.2 78.7 M 404.2 92.1 L 401.3 94.8 M 418.8 110.1 L 415.6 112.5 M 441.9 150.1 L 438.2 151.7 M 450.2 171.7 L 446.4 172.9 M 456.2 194.1 L 452.3 194.9 M 459.8 216.9 L 455.8 217.3 M 459.8 263.1 L 455.8 262.7 M 456.2 285.9 L 452.3 285.1 M 450.2 308.3 L 446.4 307.1 M 441.9 329.9 L 438.2 328.3 M 418.8 369.9 L 415.6 367.5 M 404.2 387.9 L 401.3 385.2 M 387.9 404.2 L 385.2 401.3 M 369.9 418.8 L 367.5 415.6 M 329.9 441.9 L 328.3 438.2 M 308.3 450.2 L 307.1 446.4 M 285.9 456.2 L 285.1 452.3 M 263.1 459.8 L 262.7 455.8 M 216.9 459.8 L 217.3 455.8 M 194.1 456.2 L 194.9 452.3 M 171.7 450.2 L 172.9 446.4 M 150.1 441.9 L 151.7 438.2 M 110.1 418.8 L 112.5 415.6 M 92.1 404.2 L 94.8 401.3 M 75.8 387.9 L 78.7 385.2 M 61.2 369.9 L 64.4 367.5 M 38.1 329.9 L 41.8 328.3 M 29.8 308.3 L 33.6 307.1 M 23.8 285.9 L 27.7 285.1 M 20.2 263.1 L 24.2 262.7 M 20.2 216.9 L 24.2 217.3 M 23.8 194.1 L 27.7 194.9 M 29.8 171.7 L 33.6 172.9 M 38.1 150.1 L 41.8 151.7 M 61.2 110.1 L 64.4 112.5 M 75.8 92.1 L 78.7 94.8 M 92.1 75.8 L 94.8 78.7 M 110.1 61.2 L 112.5 64.4 M 150.1 38.1 L 151.7 41.8 M 171.7 29.8 L 172.9 33.6 M 194.1 23.8 L 194.9 27.7 M 216.9 20.2 L 217.3 24.2";
+    }
+    Path {
+        x: 0;
+        y: 0;
+        width: Theme.display-size;
+        height: Theme.display-size;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 480;
+        viewbox-height: 480;
+        stroke: Theme.fg;
+        stroke-width: 2px;
+        commands: "M 240.0 16.0 L 240.0 24.0 M 352.0 46.0 L 348.0 52.9 M 434.0 128.0 L 427.1 132.0 M 464.0 240.0 L 456.0 240.0 M 434.0 352.0 L 427.1 348.0 M 352.0 434.0 L 348.0 427.1 M 240.0 464.0 L 240.0 456.0 M 128.0 434.0 L 132.0 427.1 M 46.0 352.0 L 52.9 348.0 M 16.0 240.0 L 24.0 240.0 M 46.0 128.0 L 52.9 132.0 M 128.0 46.0 L 132.0 52.9";
     }
 
-    // Hour hand
-    Rectangle {
-        x: Theme.clock-center - 4px;
-        y: Theme.clock-center - Theme.hour-hand-length;
-        width: 8px;
-        height: Theme.hour-hand-length;
-        background: Theme.fg;
-        border-radius: 2px;
-        transform-origin: { x: self.width / 2, y: Theme.hour-hand-length };
-        transform-rotation: root.hour-angle * 1deg;
+    // Hands (lengths in display pixels, see Theme)
+    Spoke {
+        angle: root.hour-angle;
+        length: Theme.hour-hand-length / 1px;
+        stroke: Theme.fg;
+        stroke-width: 8px;
     }
-
-    // Minute hand
-    Rectangle {
-        x: Theme.clock-center - 3px;
-        y: Theme.clock-center - Theme.minute-hand-length;
-        width: 6px;
-        height: Theme.minute-hand-length;
-        background: Theme.fg;
-        border-radius: 2px;
-        transform-origin: { x: self.width / 2, y: Theme.minute-hand-length };
-        transform-rotation: root.minute-angle * 1deg;
+    Spoke {
+        angle: root.minute-angle;
+        length: Theme.minute-hand-length / 1px;
+        stroke: Theme.fg;
+        stroke-width: 6px;
     }
-
-    // Second hand
-    Rectangle {
-        x: Theme.clock-center - 1px;
-        y: Theme.clock-center - Theme.second-hand-length;
-        width: 2px;
-        height: Theme.second-hand-length;
-        background: Theme.fg;
-        transform-origin: { x: self.width / 2, y: Theme.second-hand-length };
-        transform-rotation: root.second-angle * 1deg;
+    Spoke {
+        angle: root.second-angle;
+        length: Theme.second-hand-length / 1px;
+        stroke: Theme.fg;
+        stroke-width: 2px;
     }
 
     // Center dot
     Rectangle {
-        x: Theme.clock-center - 4px;
-        y: Theme.clock-center - 4px;
-        width: 8px;
-        height: 8px;
-        border-radius: 4px;
+        x: Theme.clock-center - 6px;
+        y: Theme.clock-center - 6px;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
         background: Theme.fg;
     }
 }

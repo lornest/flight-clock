@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { Arrow } from "shapes.slint";
 
 // Data struct for a beacon on the radar
 export struct RadarBeacon {
@@ -8,19 +9,8 @@ export struct RadarBeacon {
     screen-y: float,
     rotation: float,
     distance-nm: float,
-}
-
-// Data struct for selected flight detail panel
-export struct FlightDetail {
-    callsign: string,
-    hex: string,
-    origin: string,
-    destination: string,
-    has-route: bool,
     altitude: string,
     speed: string,
-    vertical-speed: string,
-    vs-direction: string,
 }
 
 export component Radar inherits Rectangle {
@@ -34,11 +24,10 @@ export component Radar inherits Rectangle {
     in property <[RadarBeacon]> beacons: [];
     in property <string> facing-direction: "N";
     in property <int> flight-count: 0;
-    in property <bool> show-detail: false;
-    in property <FlightDetail> selected-flight;
+    in property <bool> updating: false;
+    // Last fetch error; empty when the last fetch worked
+    in property <string> error-text: "";
 
-    callback beacon-tapped(string);  // hex code
-    callback detail-dismissed();
     callback background-tapped(float, float);  // x, y relative to center
 
     // Tap handler for background (dismiss detail / navigate)
@@ -109,52 +98,116 @@ export component Radar inherits Rectangle {
 
     // Flight beacons
     for beacon[idx] in root.beacons: Rectangle {
-        x: Theme.clock-center + beacon.screen-x * 1px - 50px;
-        y: Theme.clock-center + beacon.screen-y * 1px - 10px;
-        width: 100px;
-        height: 60px;
+        x: Theme.clock-center + beacon.screen-x * 1px - 70px;
+        y: Theme.clock-center + beacon.screen-y * 1px - 28px;
+        width: 140px;
+        height: 56px;
         background: transparent;
         clip: false;
 
-        // Triangle beacon (diamond approximation) - centered in the wider container
-        Rectangle {
-            width: 14px;
-            height: 14px;
-            x: 43px;
-            y: 3px;
-            background: Theme.fg;
-            transform-rotation: 45deg + beacon.rotation * 1deg;
+        // Callsign - centered above diamond
+        if beacon.callsign != "": Text {
+            x: 0px;
+            y: 0px;
+            width: 140px;
+            height: 16px;
+            text: beacon.callsign;
+            color: Theme.fg;
+            font-size: Theme.font-xs;
+            font-weight: 700;
+            horizontal-alignment: center;
         }
 
-        // Callsign + distance label - full width for text
-        VerticalLayout {
-            y: 22px;
-            width: 100%;
-            spacing: 0px;
+        // Altitude - left of diamond, right-aligned
+        Text {
+            x: 0px;
+            y: 20px;
+            width: 53px;
+            height: 16px;
+            text: beacon.altitude;
+            color: Theme.fg-dim;
+            font-size: Theme.font-xs;
+            horizontal-alignment: right;
+        }
 
-            if beacon.callsign != "": Text {
-                text: beacon.callsign;
-                color: Theme.fg;
-                font-size: Theme.font-sm;
+        // Aircraft marker, pointing in towards the centre (as the old app did)
+        Arrow {
+            x: 60px;
+            y: 18px;
+            size: 20px;
+            angle: beacon.rotation + 180;
+            color: Theme.fg;
+        }
+
+        // Speed - right of diamond, left-aligned
+        Text {
+            x: 87px;
+            y: 20px;
+            width: 53px;
+            height: 16px;
+            text: beacon.speed;
+            color: Theme.fg-dim;
+            font-size: Theme.font-xs;
+            horizontal-alignment: left;
+        }
+
+        // Distance - centered below diamond
+        Text {
+            x: 0px;
+            y: 40px;
+            width: 140px;
+            height: 16px;
+            text: "\{round(beacon.distance-nm * 10) / 10}nm";
+            color: Theme.fg-dim;
+            font-size: Theme.font-xs;
+            horizontal-alignment: center;
+        }
+    }
+
+    // Fetch in progress
+    if root.updating: Text {
+        y: 58px;
+        width: parent.width;
+        text: "Updating...";
+        color: Theme.fg-dim;
+        font-size: Theme.font-sm;
+        horizontal-alignment: center;
+    }
+
+    // Fetch failed
+    if root.error-text != "": Rectangle {
+        x: Theme.clock-center - 140px;
+        y: Theme.display-size - 92px;
+        width: 280px;
+        height: 60px;
+        border-radius: 16px;
+        background: #7f1d1dcc;
+        border-width: 1px;
+        border-color: #f8717180;
+
+        VerticalLayout {
+            alignment: center;
+            padding-left: 12px;
+            padding-right: 12px;
+            Text {
+                text: "Connection error";
+                color: #fecaca;
+                font-size: Theme.font-base;
                 font-weight: 700;
                 horizontal-alignment: center;
             }
-
             Text {
-                text: "\{round(beacon.distance-nm * 10) / 10}nm";
-                color: Theme.fg-dim;
-                font-size: Theme.font-xs;
+                text: root.error-text;
+                color: #fecacacc;
+                font-size: Theme.font-sm;
                 horizontal-alignment: center;
+                overflow: elide;
             }
-        }
-
-        TouchArea {
-            clicked => { root.beacon-tapped(beacon.hex); }
         }
     }
 
     // "Clear skies" message when no flights
-    if root.flight-count == 0: Rectangle {
+    if root.flight-count == 0 && root.error-text == "": Rectangle {
         x: Theme.clock-center - 80px;
         y: Theme.display-size - 60px;
         width: 160px;
@@ -169,124 +222,6 @@ export component Radar inherits Rectangle {
             font-weight: 500;
             horizontal-alignment: center;
             vertical-alignment: center;
-        }
-    }
-
-    // Flight detail modal overlay
-    if root.show-detail: Rectangle {
-        x: 16px;
-        y: 16px;
-        width: Theme.display-size - 32px;
-        height: Theme.display-size - 32px;
-        background: transparent;
-
-        TouchArea {
-            clicked => { root.detail-dismissed(); }
-        }
-
-        Rectangle {
-            x: (parent.width - 380px) / 2;
-            y: (parent.height - 340px) / 2;
-            width: 380px;
-            height: 340px;
-            border-radius: 12px;
-            background: #000000f2;
-            border-width: 1px;
-            border-color: #ffffff66;
-
-            TouchArea {
-                // Block clicks from passing through to dismiss
-            }
-
-            VerticalLayout {
-                padding: 20px;
-                spacing: 8px;
-
-                // Header with title and close button
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text {
-                        text: root.selected-flight.callsign != "" ? root.selected-flight.callsign : root.selected-flight.hex;
-                        color: Theme.fg;
-                        font-size: Theme.font-xl;
-                        font-weight: 700;
-                        overflow: elide;
-                        horizontal-stretch: 1;
-                    }
-                    Rectangle {
-                        width: 32px;
-                        height: 32px;
-                        Text {
-                            text: "\u{00d7}";
-                            color: Theme.fg-dim;
-                            font-size: Theme.font-2xl;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        TouchArea {
-                            clicked => { root.detail-dismissed(); }
-                        }
-                    }
-                }
-
-                // Route info - label on top, value below with wrapping
-                if root.selected-flight.has-route: VerticalLayout {
-                    spacing: 2px;
-                    Text { text: "From"; color: Theme.fg-dim; font-size: Theme.font-sm; }
-                    Text {
-                        text: root.selected-flight.origin;
-                        color: Theme.fg;
-                        font-size: Theme.font-lg;
-                        wrap: word-wrap;
-                        overflow: elide;
-                    }
-                }
-                if root.selected-flight.has-route: VerticalLayout {
-                    spacing: 2px;
-                    Text { text: "To"; color: Theme.fg-dim; font-size: Theme.font-sm; }
-                    Text {
-                        text: root.selected-flight.destination;
-                        color: Theme.fg;
-                        font-size: Theme.font-lg;
-                        wrap: word-wrap;
-                        overflow: elide;
-                    }
-                }
-                if !root.selected-flight.has-route: Text {
-                    text: "Route information unavailable";
-                    color: Theme.fg-faint;
-                    font-size: Theme.font-base;
-                    horizontal-alignment: center;
-                }
-
-                // Altitude
-                if root.selected-flight.altitude != "": HorizontalLayout {
-                    spacing: 4px;
-                    Text { text: "Altitude:"; color: Theme.fg-dim; font-size: Theme.font-base; min-width: 80px; }
-                    Text { text: root.selected-flight.altitude; color: Theme.fg; font-size: Theme.font-base; horizontal-stretch: 1; horizontal-alignment: right; }
-                }
-
-                // Speed
-                if root.selected-flight.speed != "": HorizontalLayout {
-                    spacing: 4px;
-                    Text { text: "Speed:"; color: Theme.fg-dim; font-size: Theme.font-base; min-width: 80px; }
-                    Text { text: root.selected-flight.speed; color: Theme.fg; font-size: Theme.font-base; horizontal-stretch: 1; horizontal-alignment: right; }
-                }
-
-                // Vertical speed
-                if root.selected-flight.vertical-speed != "": HorizontalLayout {
-                    spacing: 4px;
-                    Text { text: "V/S:"; color: Theme.fg-dim; font-size: Theme.font-base; min-width: 80px; }
-                    Text {
-                        text: root.selected-flight.vs-direction + " " + root.selected-flight.vertical-speed;
-                        color: Theme.fg;
-                        font-size: Theme.font-base;
-                        horizontal-stretch: 1;
-                        horizontal-alignment: right;
-                    }
-                }
-            }
         }
     }
 }

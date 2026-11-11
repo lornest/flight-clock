@@ -12,6 +12,9 @@ pub struct FlightTracker {
     current_flights: HashMap<String, Flight>,
     new_flights: Vec<String>,
     flight_info: BoundedCache<FlightInfo>,
+    /// Last callsign seen per aircraft. The feed sometimes drops the
+    /// callsign for a poll; reusing the last one keeps labels steady.
+    known_callsigns: HashMap<String, String>,
     last_update: u64,
 }
 
@@ -21,6 +24,7 @@ impl FlightTracker {
             current_flights: HashMap::new(),
             new_flights: Vec::new(),
             flight_info: BoundedCache::new(MAX_FLIGHT_INFO_ENTRIES),
+            known_callsigns: HashMap::new(),
             last_update: 0,
         }
     }
@@ -38,8 +42,18 @@ impl FlightTracker {
 
         self.current_flights.clear();
 
-        for flight in flights {
+        for mut flight in flights {
             if !flight.hex.is_empty() {
+                match flight.callsign() {
+                    Some(cs) if !cs.is_empty() => {
+                        self.known_callsigns.insert(flight.hex.clone(), cs.to_string());
+                    }
+                    _ => {
+                        if let Some(known) = self.known_callsigns.get(&flight.hex) {
+                            flight.flight = Some(known.clone());
+                        }
+                    }
+                }
                 let hex = flight.hex.clone();
                 if !previous_ids.contains(&hex) {
                     new_flight_ids.push(hex.clone());
@@ -67,6 +81,7 @@ impl FlightTracker {
 
         // Evict old flight info entries
         let current_hex_codes: HashSet<String> = self.current_flights.keys().cloned().collect();
+        self.known_callsigns.retain(|hex, _| current_hex_codes.contains(hex));
         self.flight_info.evict_keeping(&current_hex_codes);
 
         self.new_flights = new_flight_ids.clone();
@@ -126,5 +141,44 @@ impl FlightTracker {
                 Some((flight.hex.clone(), slim, info))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flight(hex: &str, callsign: Option<&str>) -> Flight {
+        serde_json::from_value(serde_json::json!({
+            "hex": hex,
+            "flight": callsign,
+            "lat": 55.95,
+            "lon": -3.37,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn keeps_last_callsign_when_feed_drops_it() {
+        let mut t = FlightTracker::new();
+        // Seen before (not new), so no route lookups happen in the test
+        t.current_flights.insert("abc123".into(), flight("abc123", Some("EZY41KM ")));
+        t.known_callsigns.insert("abc123".into(), "EZY41KM".into());
+
+        t.update_flights(vec![flight("abc123", None)]);
+        let f = t.get_current_flights();
+        assert_eq!(f[0].callsign, "EZY41KM");
+    }
+
+    #[test]
+    fn forgets_callsigns_of_departed_aircraft() {
+        let mut t = FlightTracker::new();
+        t.current_flights.insert("abc123".into(), flight("abc123", Some("EZY41KM")));
+        t.current_flights.insert("def456".into(), flight("def456", Some("BAW1")));
+        t.known_callsigns.insert("abc123".into(), "EZY41KM".into());
+        t.known_callsigns.insert("def456".into(), "BAW1".into());
+
+        t.update_flights(vec![flight("abc123", Some("EZY41KM"))]);
+        assert!(!t.known_callsigns.contains_key("def456"));
     }
 }

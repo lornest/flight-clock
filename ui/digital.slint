@@ -1,0 +1,81 @@
+import { Theme } from "theme.slint";
+import { Shape, Ring, Wordmark } from "shapes.slint";
+
+// Digital clock face (brand design "Digital – plane orbits the face").
+// The amber ring fills clockwise through each minute with a plane riding its
+// tip. Both paths come from Rust (src/ui_paths.rs) once a second.
+export component DigitalClock inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <string> time-text: "";
+    in property <string> date-text: "";
+    in property <bool> show-date: true;
+    // SVG paths: progress arc and the plane at its end
+    in property <string> progress-path: "";
+    in property <string> plane-path: "";
+
+    Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
+
+    // Track (faint) and progress (solid)
+    Ring { r: 220px; border-width: 2px; border-color: #FFB54738; }
+    Shape {
+        commands: root.progress-path;
+        stroke: Theme.accent;
+        stroke-width: 3px;
+        stroke-line-cap: round;
+    }
+
+    Wordmark { cx: 240px; cy: 126px; size: 22px; }
+
+    // HH:MM
+    Text {
+        y: 160px;
+        width: parent.width;
+        height: 144px;
+        text: root.time-text;
+        font-family: Theme.font-clock;
+        font-size: 118px;
+        font-weight: 700;
+        letter-spacing: -3px;
+        color: #FFFFFF;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    if root.show-date: Rectangle {
+        x: 171px;
+        y: 322px;
+        width: 138px;
+        height: 40px;
+        border-radius: 11px;
+        border-width: 2px;
+        border-color: Theme.accent;
+        background: #141D28;
+
+        Text {
+            text: root.date-text;
+            font-family: Theme.font-mono;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Plane with a ground-coloured outline so it reads over the ring
+    Shape {
+        commands: root.plane-path;
+        fill: Theme.bg;
+        stroke: Theme.bg;
+        stroke-width: 5px;
+        stroke-line-join: round;
+    }
+    Shape {
+        commands: root.plane-path;
+        fill: Theme.accent;
+    }
+}

@@ -1,0 +1,76 @@
+import { Theme } from "theme.slint";
+import { Ring } from "shapes.slint";
+
+// Pairing code for the settings page, shown when a phone asks to pair.
+export component PairingCode inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <string> code: "";
+    in property <string> web-address: "";
+    callback cancel();
+
+    // Swallow taps
+    TouchArea { }
+
+    Ring { r: 236px; border-width: 2px; border-color: Theme.accent-soft; }
+
+    VerticalLayout {
+        alignment: center;
+        padding-left: 70px;
+        padding-right: 70px;
+        spacing: 14px;
+
+        Text {
+            text: "PAIRING CODE";
+            font-family: Theme.font-mono;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+        }
+        // Already grouped by Rust, e.g. "482 913"
+        Text {
+            text: root.code;
+            font-family: Theme.font-clock;
+            font-size: 64px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: Theme.fg;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Enter this on your phone at " + root.web-address;
+            font-family: Theme.font-mono;
+            font-size: 12px;
+            color: Theme.fg-dim;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    // Dismiss
+    Rectangle {
+        x: Theme.clock-center - 28px;
+        y: 360px;
+        width: 56px;
+        height: 56px;
+        border-radius: 28px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: touch.pressed ? Theme.surface : Theme.bg;
+        Text {
+            text: "×";
+            font-family: Theme.font-display;
+            font-size: Theme.font-3xl;
+            color: Theme.fg-dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea {
+            clicked => { root.cancel(); }
+        }
+    }
+}

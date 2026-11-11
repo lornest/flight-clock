@@ -1,0 +1,84 @@
+import { Theme } from "theme.slint";
+import { Shape, Line, Ring, Dot, CenteredText, Wordmark } from "shapes.slint";
+
+// Launch screen (brand design "Launch screen"). Static: animation on the
+// software renderer redraws the whole screen every frame.
+// `status` shows what startup is waiting on (e.g. joining WiFi).
+export component Splash inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <string> status: "";
+
+    // Scope rings and crosshair
+    Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
+    Ring { r: 200px; border-color: #1C2633; }
+    Ring { r: 140px; border-color: #1C2633; }
+    Ring { r: 80px; border-color: #1C2633; }
+    Line { x1: 240; y1: 40; x2: 240; y2: 440; stroke: #1C2633; stroke-width: 1px; }
+    Line { x1: 40; y1: 240; x2: 440; y2: 240; stroke: #1C2633; stroke-width: 1px; }
+
+    // Hour ticks
+    Shape {
+        commands: "M240 14L240 28M353 44.3L346 56.4M435.7 127L423.6 134M466 240L452 240M435.7 353L423.6 346M353 435.7L346 423.6M240 466L240 452M127 435.7L134 423.6M44.3 353L56.4 346M14 240L28 240M44.3 127L56.4 134M127 44.3L134 56.4";
+        stroke: #5B6B7E;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+    }
+
+    // Flight path: dotted arc from 12 to 2 o'clock, plane at its end
+    Shape {
+        commands: "M240 40L242 40M249 40.2L251 40.3M258 40.8L260 41M266.9 41.8L268.9 42.1M275.8 43.2L277.8 43.6M284.6 45L286.6 45.5M293.3 47.2L295.3 47.8M302 49.8L303.9 50.5M310.5 52.8L312.3 53.5M318.8 56.2L320.6 57M327 59.9L328.8 60.8M335 64L336.8 65M342.8 68.5L344.5 69.5M350.4 73.3L352.1 74.4M357.8 78.4L359.4 79.6M365 83.9L366.5 85.1M371.9 89.6L373.4 91M378.5 95.7L379.9 97.1M384.9 102.1L386.2 103.6M390.9 108.8L392.2 110.3M396.7 115.7L397.9 117.3M402.1 122.9L403.3 124.5M407.2 130.3L408.3 131.9M412 137.9L413 139.6";
+        stroke: Theme.accent;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+    }
+    Shape {
+        commands: "M419.7 151.3C418.3 152.1 416.3 149.8 414.8 147.2L412.3 142.8L399.9 143L398.4 140.4L409.5 138.1L406.8 133.3L402.7 132.8L401.7 131.1L407.2 129.6L411.2 125.6L412.2 127.3L410.6 131.1L413.4 135.9L421 127.4L422.5 130L416.1 140.6L418.6 145C420.1 147.6 421.1 150.5 419.7 151.3Z";
+        fill: Theme.accent;
+    }
+
+    Dot { cx: 240px; cy: 240px; r: 3px; background: Theme.accent; }
+
+    // Wordmark and tagline, each on a ground-coloured plate over the grid
+    Wordmark {
+        cx: 240px;
+        cy: 250px;
+        size: 50px;
+        spacing: -1.5px;
+        backdrop: Theme.bg;
+        pad-x: 14px;
+    }
+    Rectangle {
+        x: 240px - self.width / 2;
+        y: 296px;
+        width: tagline.preferred-width + 16px;
+        height: 20px;
+        background: Theme.bg;
+        tagline := Text {
+            text: "TIME · OVERHEAD TRAFFIC";
+            font-family: Theme.font-mono;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 3.5px;
+            color: Theme.fg-dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Startup status, below the tagline
+    CenteredText {
+        cx: 240px;
+        cy: 368px;
+        width: 280px;
+        x: 100px;
+        text: root.status;
+        font-family: Theme.font-mono;
+        font-size: 11px;
+        letter-spacing: 1px;
+        color: Theme.fg-faint;
+        wrap: word-wrap;
+    }
+}

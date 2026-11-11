@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { Ring } from "shapes.slint";
 
 export component WifiSetup inherits Rectangle {
     width: Theme.display-size;
@@ -6,63 +7,101 @@ export component WifiSetup inherits Rectangle {
     background: Theme.bg;
 
     in property <string> status-text: "Setting up WiFi...";
+    in property <bool> status-is-error: false;
+    in property <bool> can-cancel: false;
     in property <string> ssid: "FlightClock-Setup";
+    in property <string> portal-address: "192.168.4.1";
 
+    callback cancel();
+
+    Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
+    Ring { r: 200px; border-color: Theme.grid-faint; }
+
+    // Content is kept inside the round display's safe area.
     VerticalLayout {
         alignment: center;
-        padding: 40px;
-        spacing: 20px;
+        padding-left: 72px;
+        padding-right: 72px;
+        spacing: 12px;
 
-        // WiFi icon area
-        Rectangle {
-            height: 60px;
-            Text {
-                text: "WiFi Setup";
-                color: Theme.fg;
-                font-size: Theme.font-3xl;
-                horizontal-alignment: center;
-            }
-        }
-
-        // Instructions
         Text {
-            text: "Connect to WiFi network:";
-            color: Theme.fg-dim;
-            font-size: Theme.font-lg;
+            text: "WIFI SETUP";
+            font-family: Theme.font-mono;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            color: Theme.accent;
             horizontal-alignment: center;
-            wrap: word-wrap;
         }
 
-        // SSID display
+        Text {
+            text: "On your phone, join";
+            font-family: Theme.font-display;
+            font-size: Theme.font-lg;
+            font-weight: 500;
+            color: Theme.fg;
+            horizontal-alignment: center;
+        }
+
         Rectangle {
-            height: 60px;
-            border-radius: 12px;
-            background: #ffffff1a;
+            height: 48px;
+            border-radius: 24px;
+            border-width: 1px;
+            border-color: Theme.accent;
+            background: Theme.surface;
             Text {
                 text: root.ssid;
-                color: Theme.accent-light;
-                font-size: Theme.font-2xl;
-                font-weight: 700;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-lg;
+                font-weight: 500;
+                color: Theme.accent;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
 
-        // Step-by-step instructions
         Text {
-            text: "Then open any webpage\nto configure your network.";
+            text: "The setup page should open by itself.\nIf not, go to " + root.portal-address;
+            font-family: Theme.font-mono;
+            font-size: 12px;
             color: Theme.fg-dim;
-            font-size: Theme.font-base;
             horizontal-alignment: center;
             wrap: word-wrap;
         }
 
-        // Status
         Text {
             text: root.status-text;
-            color: Theme.fg-faint;
-            font-size: Theme.font-sm;
+            font-family: Theme.font-mono;
+            font-size: 12px;
+            font-weight: root.status-is-error ? 500 : 400;
+            color: root.status-is-error ? Theme.error : Theme.fg-faint;
             horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.can-cancel: HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 200px;
+                height: 44px;
+                border-radius: 22px;
+                border-width: 1px;
+                border-color: Theme.line;
+                background: cancel-touch.pressed ? Theme.surface : Theme.bg;
+                Text {
+                    text: "USE SAVED WIFI";
+                    font-family: Theme.font-mono;
+                    font-size: 12px;
+                    font-weight: 500;
+                    letter-spacing: 1.5px;
+                    color: Theme.fg-soft;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                cancel-touch := TouchArea {
+                    clicked => { root.cancel(); }
+                }
+            }
         }
     }
 }

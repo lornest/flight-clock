@@ -1,37 +1,62 @@
-// Theme: colors, sizes, and shared styles for the flight clock
+// FlightClock brand theme: night-sky ground, amber accent,
+// Space Grotesk for display text, JetBrains Mono for data.
+
+// Fonts are compiled into the binary (OFL licences in assets/fonts).
+import "../assets/fonts/SpaceGrotesk-Medium.ttf";
+import "../assets/fonts/SpaceGrotesk-SemiBold.ttf";
+import "../assets/fonts/JetBrainsMono-Regular.ttf";
+import "../assets/fonts/JetBrainsMono-Medium.ttf";
+import "../assets/fonts/JetBrainsMono-SemiBold.ttf";
+import "../assets/fonts/B612-Bold.ttf";
 
 export global Theme {
     // Display dimensions
     out property <length> display-size: 480px;
     out property <length> display-radius: 240px;
-
-    // Colors
-    out property <color> bg: #000000;
-    out property <color> fg: #ffffff;
-    out property <color> fg-dim: #ffffff99;
-    out property <color> fg-faint: #ffffff33;
-    out property <color> accent: #3b82f6;       // blue-600
-    out property <color> accent-light: #60a5fa;  // blue-400
-    out property <color> alert-bg: #1e3a5f;      // blue-900
-    out property <color> beacon-color: #fde047;   // yellow-300
-    out property <color> ring-color: #ffffff33;
-
-    // Clock dimensions
     out property <length> clock-center: 240px;
-    out property <length> hour-hand-length: 120px;
-    out property <length> minute-hand-length: 160px;
-    out property <length> second-hand-length: 180px;
 
-    // Radar
-    out property <length> radar-max-radius: 204px;  // 240 * 0.85
+    // Type
+    out property <string> font-display: "Space Grotesk";
+    out property <string> font-mono: "JetBrains Mono";
+    out property <string> font-clock: "B612";      // digital face time
+
+    // Palette
+    out property <color> bg: #0B1118;           // ground
+    out property <color> surface: #121A23;      // cards, buttons
+    out property <color> fg: #EEF2F6;           // primary text, hands
+    out property <color> fg-soft: #C9D3DE;      // hour ticks, aircraft
+    out property <color> fg-mid: #A3B1C2;       // radar data labels
+    out property <color> fg-dim: #8A9AAD;       // secondary text
+    out property <color> fg-faint: #6E7F93;     // tertiary labels
+    out property <color> line: #2A3646;         // outer ring, borders
+    out property <color> line-tick: #3A4757;    // minute ticks
+    out property <color> grid: #223040;         // radar rings
+    out property <color> grid-faint: #161F2A;   // faint rings / diagonals
+    out property <color> accent: #FFB547;       // amber
+    out property <color> accent-soft: #FFB54799;
+    out property <color> error: #F87171;
+
+    // Legacy aliases used by older components
+    out property <color> accent-light: #FFB547;
+    out property <color> beacon-color: #FFB547;
+    out property <color> alert-bg: #0B1118;
+    out property <color> ring-color: #223040;
+
+    // Clock
+    out property <length> hour-hand-length: 120px;
+    out property <length> minute-hand-length: 186px;
+    out property <length> second-hand-length: 178px;
+
+    // Radar: outermost range ring radius
+    out property <length> radar-max-radius: 210px;
 
     // Font sizes
-    out property <length> font-xs: 12px;
-    out property <length> font-sm: 14px;
+    out property <length> font-xs: 11px;
+    out property <length> font-sm: 13px;
     out property <length> font-base: 16px;
     out property <length> font-lg: 20px;
     out property <length> font-xl: 24px;
     out property <length> font-2xl: 30px;
     out property <length> font-3xl: 36px;
-    out property <length> font-4xl: 48px;
+    out property <length> font-4xl: 50px;
 }

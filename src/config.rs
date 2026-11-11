@@ -4,6 +4,21 @@ use std::path::Path;
 
 const CONFIG_PATH: &str = "/etc/flight-clock/config.json";
 
+/// Config file path: $FLIGHT_CLOCK_CONFIG if set (e.g. for local testing),
+/// else /etc/flight-clock/config.json.
+pub fn config_path() -> String {
+    std::env::var("FLIGHT_CLOCK_CONFIG").unwrap_or_else(|_| CONFIG_PATH.to_string())
+}
+
+/// Observer position and radar range. Shared between the poller and the UI
+/// so the web settings page can change it without a restart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Location {
+    pub lat: f64,
+    pub lon: f64,
+    pub max_radius_nm: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_latitude")]
@@ -14,6 +29,18 @@ pub struct Config {
     pub radius_nm: f64,
     #[serde(default = "default_facing_direction")]
     pub facing_direction: String,
+    /// "analog" or "digital"; switched by holding the FlightClock logo
+    #[serde(default = "default_clock_face")]
+    pub clock_face: String,
+    /// Date panel on the clock faces; toggled from the settings screen
+    #[serde(default = "default_show_date")]
+    pub show_date: bool,
+    /// "stable" or "beta" (beta also gets pre-releases)
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
+    /// Install updates automatically (daily). Off: only check.
+    #[serde(default = "default_auto_update")]
+    pub auto_update: bool,
 }
 
 fn default_latitude() -> f64 {
@@ -28,6 +55,18 @@ fn default_radius_nm() -> f64 {
 fn default_facing_direction() -> String {
     "N".to_string()
 }
+fn default_clock_face() -> String {
+    "analog".to_string()
+}
+fn default_show_date() -> bool {
+    true
+}
+fn default_update_channel() -> String {
+    "stable".to_string()
+}
+fn default_auto_update() -> bool {
+    true
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -36,13 +75,26 @@ impl Default for Config {
             longitude: default_longitude(),
             radius_nm: default_radius_nm(),
             facing_direction: default_facing_direction(),
+            clock_face: default_clock_face(),
+            show_date: default_show_date(),
+            update_channel: default_update_channel(),
+            auto_update: default_auto_update(),
         }
     }
 }
 
 impl Config {
+    pub fn location(&self) -> Location {
+        Location {
+            lat: self.latitude,
+            lon: self.longitude,
+            max_radius_nm: self.radius_nm,
+        }
+    }
+
     pub fn load(path: Option<&str>) -> Self {
-        let config_path = path.unwrap_or(CONFIG_PATH);
+        let default_path = config_path();
+        let config_path = path.unwrap_or(&default_path);
         let p = Path::new(config_path);
 
         if !p.exists() {
@@ -66,7 +118,8 @@ impl Config {
     }
 
     pub fn save(&self, path: Option<&str>) -> Result<(), String> {
-        let config_path = path.unwrap_or(CONFIG_PATH);
+        let default_path = config_path();
+        let config_path = path.unwrap_or(&default_path);
         let p = Path::new(config_path);
 
         // Ensure parent directory exists

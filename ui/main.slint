@@ -1,12 +1,14 @@
 import { Theme } from "theme.slint";
 import { Clock } from "clock.slint";
 import { Alert, AlertBeacon, AlertFlightDetail } from "alert.slint";
-import { Radar, RadarBeacon } from "radar.slint";
+import { Radar, RadarBeacon, TrailPoint, CompassLabel } from "radar.slint";
 import { DirectionSelector } from "direction.slint";
 import { WifiSetup } from "wifi_setup.slint";
 import { Splash } from "splash.slint";
+import { DigitalClock } from "digital.slint";
+import { PairingCode } from "pairing.slint";
 
-export { AlertBeacon, AlertFlightDetail, RadarBeacon }
+export { AlertBeacon, AlertFlightDetail, RadarBeacon, TrailPoint, CompassLabel }
 
 export component App inherits Window {
     title: "FlightClock";
@@ -14,6 +16,7 @@ export component App inherits Window {
     height: Theme.display-size;
     background: Theme.bg;
     no-frame: true;
+    default-font-family: Theme.font-display;
 
     // --- State properties set from Rust ---
 
@@ -36,11 +39,27 @@ export component App inherits Window {
     in property <int> flight-count: 0;
     in property <bool> radar-updating: false;
     in property <string> radar-error: "";
+    in property <[CompassLabel]> radar-compass: [];
+    in property <[string]> radar-ring-labels: [];
 
     // Clock hand angles (degrees)
     in property <float> hour-angle: 0;
     in property <float> minute-angle: 0;
     in property <float> second-angle: 0;
+    in property <string> date-text: "";
+    in property <string> second-plane: "";
+    // "HH:MM" for the radar status pill and the digital face
+    in property <string> time-text: "";
+    // Clock face: "analog" or "digital"
+    in property <string> clock-face: "analog";
+    in property <bool> show-date: true;
+    // Digital face paths (progress arc and orbiting plane)
+    in property <string> digital-progress: "";
+    in property <string> digital-plane: "";
+    // Settings page address shown on the settings menu, e.g. "flight-clock.local"
+    in property <string> web-address: "";
+    // Pairing code for the settings page; shown over everything while set
+    in property <string> pairing-code: "";
 
     // WiFi
     in property <bool> wifi-setup-mode: false;
@@ -62,6 +81,12 @@ export component App inherits Window {
     callback update-clock();
     callback wifi-setup-requested();
     callback wifi-setup-cancelled();
+    // Held the FlightClock logo: switch analog <-> digital
+    callback clock-face-toggle-requested();
+    // DATE button on the settings screen
+    callback show-date-toggled();
+    // Pairing code dismissed on the clock
+    callback pairing-cancelled();
 
     // --- 1-second timer for clock updates ---
     Timer {
@@ -85,16 +110,31 @@ export component App inherits Window {
     }
 
     // Clock screen
-    if root.main-ui && root.current-screen == 0 && !root.alert-active: Clock {
+    property <bool> clock-visible: root.main-ui && root.current-screen == 0 && !root.alert-active;
+
+    if root.clock-visible && root.clock-face != "digital": Clock {
         hour-angle: root.hour-angle;
         minute-angle: root.minute-angle;
         second-angle: root.second-angle;
+        date-text: root.date-text;
+        show-date: root.show-date;
+        second-plane: root.second-plane;
+    }
+
+    if root.clock-visible && root.clock-face == "digital": DigitalClock {
+        time-text: root.time-text;
+        date-text: root.date-text;
+        show-date: root.show-date;
+        progress-path: root.digital-progress;
+        plane-path: root.digital-plane;
     }
 
     // Radar screen
     if root.main-ui && root.current-screen == 1: Radar {
         beacons: root.radar-beacons;
-        facing-direction: root.facing-direction;
+        compass: root.radar-compass;
+        ring-labels: root.radar-ring-labels;
+        time-text: root.time-text;
         flight-count: root.flight-count;
         updating: root.radar-updating;
         error-text: root.radar-error;
@@ -113,6 +153,9 @@ export component App inherits Window {
     if root.main-ui && root.show-direction-selector: DirectionSelector {
         current-direction: root.facing-direction;
         wifi-network: root.wifi-network;
+        show-date: root.show-date;
+        web-address: root.web-address;
+        date-toggled => { root.show-date-toggled(); }
         direction-selected(dir) => { root.direction-selected(dir); }
         close => { root.direction-selector-closed(); }
         wifi-settings => { root.wifi-setup-requested(); }
@@ -127,5 +170,37 @@ export component App inherits Window {
                 (self.mouse-y - root.height / 2) / 1px
             );
         }
+    }
+
+    // Hold the FlightClock logo (~0.7s) to switch clock face. Sits above the
+    // double-tap area, so taps on the logo itself don't count as screen taps.
+    property <bool> logo-held: false;
+    if root.clock-visible && !root.show-direction-selector: TouchArea {
+        x: 150px;
+        y: 104px;
+        width: 180px;
+        height: 60px;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.logo-held = true;
+            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                root.logo-held = false;
+            }
+        }
+    }
+    Timer {
+        interval: 700ms;
+        running: root.logo-held;
+        triggered => {
+            root.logo-held = false;
+            root.clock-face-toggle-requested();
+        }
+    }
+
+    // Settings page pairing code (over everything except WiFi setup)
+    if !root.starting-up && !root.wifi-setup-mode && root.pairing-code != "": PairingCode {
+        code: root.pairing-code;
+        web-address: root.web-address;
+        cancel => { root.pairing-cancelled(); }
     }
 }

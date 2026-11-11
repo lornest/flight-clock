@@ -1,8 +1,10 @@
 import { Theme } from "theme.slint";
-import { Spoke } from "shapes.slint";
+import { Shape, Needle, Spoke, Ring, Dot, CenteredText, Wordmark } from "shapes.slint";
 
-// Analogue clock. Drawn with paths rather than rotated rectangles: the
-// software renderer on the Pi doesn't support transform-rotation.
+// Analogue clock face (brand design "Analog clock face").
+// Tick coordinates come from scripts/gen-ui-paths.py. The plane on the
+// second hand is drawn from Rust (`second-plane`, src/ui_paths.rs), since
+// its outline has to be rotated every second.
 export component Clock inherits Rectangle {
     width: Theme.display-size;
     height: Theme.display-size;
@@ -11,63 +13,102 @@ export component Clock inherits Rectangle {
     in property <float> hour-angle: 0;
     in property <float> minute-angle: 0;
     in property <float> second-angle: 0;
+    in property <string> date-text: "";
+    in property <bool> show-date: true;
+    // SVG path of the plane at the tip of the second hand
+    in property <string> second-plane: "";
 
-    // Tick marks: 60 around the edge, every 5th longer and thicker.
-    // Coordinates precomputed for a 480x480 dial centred at (240, 240).
-    Path {
-        x: 0;
-        y: 0;
-        width: Theme.display-size;
-        height: Theme.display-size;
-        viewbox-x: 0;
-        viewbox-y: 0;
-        viewbox-width: 480;
-        viewbox-height: 480;
-        stroke: Theme.fg;
-        stroke-width: 1px;
-        commands: "M 263.1 20.2 L 262.7 24.2 M 285.9 23.8 L 285.1 27.7 M 308.3 29.8 L 307.1 33.6 M 329.9 38.1 L 328.3 41.8 M 369.9 61.2 L 367.5 64.4 M 387.9 75.8 L 385.2 78.7 M 404.2 92.1 L 401.3 94.8 M 418.8 110.1 L 415.6 112.5 M 441.9 150.1 L 438.2 151.7 M 450.2 171.7 L 446.4 172.9 M 456.2 194.1 L 452.3 194.9 M 459.8 216.9 L 455.8 217.3 M 459.8 263.1 L 455.8 262.7 M 456.2 285.9 L 452.3 285.1 M 450.2 308.3 L 446.4 307.1 M 441.9 329.9 L 438.2 328.3 M 418.8 369.9 L 415.6 367.5 M 404.2 387.9 L 401.3 385.2 M 387.9 404.2 L 385.2 401.3 M 369.9 418.8 L 367.5 415.6 M 329.9 441.9 L 328.3 438.2 M 308.3 450.2 L 307.1 446.4 M 285.9 456.2 L 285.1 452.3 M 263.1 459.8 L 262.7 455.8 M 216.9 459.8 L 217.3 455.8 M 194.1 456.2 L 194.9 452.3 M 171.7 450.2 L 172.9 446.4 M 150.1 441.9 L 151.7 438.2 M 110.1 418.8 L 112.5 415.6 M 92.1 404.2 L 94.8 401.3 M 75.8 387.9 L 78.7 385.2 M 61.2 369.9 L 64.4 367.5 M 38.1 329.9 L 41.8 328.3 M 29.8 308.3 L 33.6 307.1 M 23.8 285.9 L 27.7 285.1 M 20.2 263.1 L 24.2 262.7 M 20.2 216.9 L 24.2 217.3 M 23.8 194.1 L 27.7 194.9 M 29.8 171.7 L 33.6 172.9 M 38.1 150.1 L 41.8 151.7 M 61.2 110.1 L 64.4 112.5 M 75.8 92.1 L 78.7 94.8 M 92.1 75.8 L 94.8 78.7 M 110.1 61.2 L 112.5 64.4 M 150.1 38.1 L 151.7 41.8 M 171.7 29.8 L 172.9 33.6 M 194.1 23.8 L 194.9 27.7 M 216.9 20.2 L 217.3 24.2";
+    // Rings
+    Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
+    Ring { r: 140px; border-color: Theme.grid-faint; }
+    Ring { r: 80px; border-color: Theme.grid-faint; }
+
+    // Minute and hour ticks
+    Shape {
+        commands: "M263.3 18.2L262.3 28.2M286.4 21.9L284.3 31.7M308.9 27.9L305.8 37.4M330.7 36.3L326.6 45.4M371.1 59.6L365.2 67.7M389.2 74.3L382.5 81.7M405.7 90.8L398.3 97.5M420.4 108.9L412.3 114.8M443.7 149.3L434.6 153.4M452.1 171.1L442.6 174.2M458.1 193.6L448.3 195.7M461.8 216.7L451.8 217.7M461.8 263.3L451.8 262.3M458.1 286.4L448.3 284.3M452.1 308.9L442.6 305.8M443.7 330.7L434.6 326.6M420.4 371.1L412.3 365.2M405.7 389.2L398.3 382.5M389.2 405.7L382.5 398.3M371.1 420.4L365.2 412.3M330.7 443.7L326.6 434.6M308.9 452.1L305.8 442.6M286.4 458.1L284.3 448.3M263.3 461.8L262.3 451.8M216.7 461.8L217.7 451.8M193.6 458.1L195.7 448.3M171.1 452.1L174.2 442.6M149.3 443.7L153.4 434.6M108.9 420.4L114.8 412.3M90.8 405.7L97.5 398.3M74.3 389.2L81.7 382.5M59.6 371.1L67.7 365.2M36.3 330.7L45.4 326.6M27.9 308.9L37.4 305.8M21.9 286.4L31.7 284.3M18.2 263.3L28.2 262.3M18.2 216.7L28.2 217.7M21.9 193.6L31.7 195.7M27.9 171.1L37.4 174.2M36.3 149.3L45.4 153.4M59.6 108.9L67.7 114.8M74.3 90.8L81.7 97.5M90.8 74.3L97.5 81.7M108.9 59.6L114.8 67.7M149.3 36.3L153.4 45.4M171.1 27.9L174.2 37.4M193.6 21.9L195.7 31.7M216.7 18.2L217.7 28.2";
+        stroke: Theme.line-tick;
+        stroke-width: 1.5px;
     }
-    Path {
-        x: 0;
-        y: 0;
-        width: Theme.display-size;
-        height: Theme.display-size;
-        viewbox-x: 0;
-        viewbox-y: 0;
-        viewbox-width: 480;
-        viewbox-height: 480;
-        stroke: Theme.fg;
-        stroke-width: 2px;
-        commands: "M 240.0 16.0 L 240.0 24.0 M 352.0 46.0 L 348.0 52.9 M 434.0 128.0 L 427.1 132.0 M 464.0 240.0 L 456.0 240.0 M 434.0 352.0 L 427.1 348.0 M 352.0 434.0 L 348.0 427.1 M 240.0 464.0 L 240.0 456.0 M 128.0 434.0 L 132.0 427.1 M 46.0 352.0 L 52.9 348.0 M 16.0 240.0 L 24.0 240.0 M 46.0 128.0 L 52.9 132.0 M 128.0 46.0 L 132.0 52.9";
+    Shape {
+        commands: "M240 17L240 35M351.5 46.9L342.5 62.5M433.1 128.5L417.5 137.5M463 240L445 240M433.1 351.5L417.5 342.5M351.5 433.1L342.5 417.5M240 463L240 445M128.5 433.1L137.5 417.5M46.9 351.5L62.5 342.5M17 240L35 240M46.9 128.5L62.5 137.5M128.5 46.9L137.5 62.5";
+        stroke: Theme.fg-soft;
+        stroke-width: 4px;
     }
 
-    // Hands (lengths in display pixels, see Theme)
-    Spoke {
+    // Numerals
+    for n[i] in [
+        { label: "12", x: 240px, y: 70px },
+        { label: "3", x: 410px, y: 240px },
+        { label: "6", x: 240px, y: 410px },
+        { label: "9", x: 70px, y: 240px },
+    ]: CenteredText {
+        cx: n.x;
+        cy: n.y;
+        text: n.label;
+        font-family: Theme.font-display;
+        font-size: 34px;
+        font-weight: 500;
+        color: Theme.fg;
+    }
+
+    Wordmark { cx: 240px; cy: 144px; size: 22px; }
+
+    // Date panel (design: "amber date"), drawn under the hands
+    if root.show-date: Rectangle {
+        x: 171px;
+        y: 313px;
+        width: 138px;
+        height: 40px;
+        border-radius: 11px;
+        border-width: 2px;
+        border-color: Theme.accent;
+        background: #141D28;
+
+        Text {
+            x: 1px;  // the design centres the text 1px right of the panel
+            width: parent.width;
+            height: parent.height;
+            text: root.date-text;
+            font-family: Theme.font-mono;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    // Hands
+    Needle {
         angle: root.hour-angle;
-        length: Theme.hour-hand-length / 1px;
-        stroke: Theme.fg;
-        stroke-width: 8px;
+        length: 120;
+        tail: 22;
+        base-width: 10;
+        tip-width: 7;
+        color: Theme.fg;
     }
-    Spoke {
+    Needle {
         angle: root.minute-angle;
-        length: Theme.minute-hand-length / 1px;
-        stroke: Theme.fg;
-        stroke-width: 6px;
+        length: 186;
+        tail: 24;
+        base-width: 7;
+        tip-width: 5;
+        color: Theme.fg;
     }
     Spoke {
         angle: root.second-angle;
-        length: Theme.second-hand-length / 1px;
-        stroke: Theme.fg;
+        length: 178;
+        tail: 42;
+        stroke: Theme.accent;
         stroke-width: 2px;
     }
-
-    // Center dot
-    Rectangle {
-        x: Theme.clock-center - 6px;
-        y: Theme.clock-center - 6px;
-        width: 12px;
-        height: 12px;
-        border-radius: 6px;
-        background: Theme.fg;
+    Shape {
+        commands: root.second-plane;
+        fill: Theme.accent;
     }
+
+    // Hub
+    Dot { cx: 240px; cy: 240px; r: 8px; background: Theme.accent; }
+    Dot { cx: 240px; cy: 240px; r: 3px; background: Theme.bg; }
 }

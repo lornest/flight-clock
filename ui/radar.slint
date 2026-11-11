@@ -1,36 +1,58 @@
 import { Theme } from "theme.slint";
-import { Arrow } from "shapes.slint";
+import { Shape, Line, Ring, Dot, CenteredText } from "shapes.slint";
 
-// Data struct for a beacon on the radar
+export struct TrailPoint {
+    x: float,
+    y: float,
+}
+
+// One aircraft on the radar. Coordinates are absolute display coordinates.
 export struct RadarBeacon {
     hex: string,
     callsign: string,
-    screen-x: float,
-    screen-y: float,
-    rotation: float,
-    distance-nm: float,
-    altitude: string,
-    speed: string,
+    // Marker centre
+    x: float,
+    y: float,
+    // End of the heading line (same as x/y when the track is unknown)
+    hx: float,
+    hy: float,
+    // Earlier positions, oldest first (up to 3)
+    trail: [TrailPoint],
+    // Second label line, e.g. "FL340 452" (flight level / altitude, speed)
+    info: string,
+    // Put the label on the left of the marker (near the right edge)
+    label-left: bool,
+    // Closest aircraft: drawn in the accent colour
+    highlight: bool,
 }
 
+// A compass label, positioned by Rust for the current facing direction.
+export struct CompassLabel {
+    text: string,
+    x: float,
+    y: float,
+    primary: bool,
+}
+
+// Radar scope (brand design "Radar"). The sweep from the design is left out:
+// a continuous animation pins the Pi Zero's CPU with the software renderer.
 export component Radar inherits Rectangle {
     width: Theme.display-size;
     height: Theme.display-size;
     background: Theme.bg;
-    border-width: 2px;
-    border-color: #ffffff33;
-    border-radius: Theme.display-radius;
 
     in property <[RadarBeacon]> beacons: [];
-    in property <string> facing-direction: "N";
+    in property <[CompassLabel]> compass: [];
+    // Range labels for the inner, middle and outer rings, e.g. "2", "4", "6 NM"
+    in property <[string]> ring-labels: [];
     in property <int> flight-count: 0;
+    in property <string> time-text: "";
     in property <bool> updating: false;
     // Last fetch error; empty when the last fetch worked
     in property <string> error-text: "";
 
     callback background-tapped(float, float);  // x, y relative to center
 
-    // Tap handler for background (dismiss detail / navigate)
     bg-touch := TouchArea {
         clicked => {
             root.background-tapped(
@@ -40,186 +62,132 @@ export component Radar inherits Rectangle {
         }
     }
 
-    // Distance rings at 20%, 40%, 60%, 80%, 100% of max radius
-    for i in 5: Rectangle {
-        property <length> ring-radius: (i + 1) * Theme.radar-max-radius / 5;
-        x: Theme.clock-center - self.ring-radius;
-        y: Theme.clock-center - self.ring-radius;
-        width: self.ring-radius * 2;
-        height: self.ring-radius * 2;
-        border-radius: self.ring-radius;
-        border-width: 1px;
-        border-color: #ffffff33;
-        background: transparent;
+    // Scope
+    Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
+    Ring { r: 210px; border-color: Theme.grid; }
+    Ring { r: 140px; border-color: Theme.grid; }
+    Ring { r: 70px; border-color: Theme.grid; }
+    Line { x1: 240; y1: 30; x2: 240; y2: 450; stroke: #1A2531; stroke-width: 1px; }
+    Line { x1: 30; y1: 240; x2: 450; y2: 240; stroke: #1A2531; stroke-width: 1px; }
+    Line { x1: 91.5; y1: 91.5; x2: 388.5; y2: 388.5; stroke: Theme.grid-faint; stroke-width: 1px; }
+    Line { x1: 388.5; y1: 91.5; x2: 91.5; y2: 388.5; stroke: Theme.grid-faint; stroke-width: 1px; }
+    Shape {
+        commands: "M240 10L240 18M264 11.3L263.2 19.2M287.8 15L286.2 22.9M311.1 21.3L308.6 28.9M333.5 29.9L330.3 37.2M355 40.8L351 47.7M375.2 53.9L370.5 60.4M393.9 69.1L388.5 75M410.9 86.1L405 91.5M426.1 104.8L419.6 109.5M439.2 125L432.3 129M450.1 146.5L442.8 149.7M458.7 168.9L451.1 171.4M465 192.2L457.1 193.8M468.7 216L460.8 216.8M470 240L462 240M468.7 264L460.8 263.2M465 287.8L457.1 286.2M458.7 311.1L451.1 308.6M450.1 333.5L442.8 330.3M439.2 355L432.3 351M426.1 375.2L419.6 370.5M410.9 393.9L405 388.5M393.9 410.9L388.5 405M375.2 426.1L370.5 419.6M355 439.2L351 432.3M333.5 450.1L330.3 442.8M311.1 458.7L308.6 451.1M287.8 465L286.2 457.1M264 468.7L263.2 460.8M240 470L240 462M216 468.7L216.8 460.8M192.2 465L193.8 457.1M168.9 458.7L171.4 451.1M146.5 450.1L149.7 442.8M125 439.2L129 432.3M104.8 426.1L109.5 419.6M86.1 410.9L91.5 405M69.1 393.9L75 388.5M53.9 375.2L60.4 370.5M40.8 355L47.7 351M29.9 333.5L37.2 330.3M21.3 311.1L28.9 308.6M15 287.8L22.9 286.2M11.3 264L19.2 263.2M10 240L18 240M11.3 216L19.2 216.8M15 192.2L22.9 193.8M21.3 168.9L28.9 171.4M29.9 146.5L37.2 149.7M40.8 125L47.7 129M53.9 104.8L60.4 109.5M69.1 86.1L75 91.5M86.1 69.1L91.5 75M104.8 53.9L109.5 60.4M125 40.8L129 47.7M146.5 29.9L149.7 37.2M168.9 21.3L171.4 28.9M192.2 15L193.8 22.9M216 11.3L216.8 19.2";
+        stroke: Theme.line-tick;
+        stroke-width: 1.5px;
     }
 
-    // Center dot
-    Rectangle {
-        x: Theme.clock-center - 3px;
-        y: Theme.clock-center - 3px;
-        width: 6px;
-        height: 6px;
-        border-radius: 3px;
-        background: Theme.fg;
+    // Compass (rotates with the facing direction)
+    for c in root.compass: CenteredText {
+        cx: c.x * 1px;
+        cy: c.y * 1px;
+        text: c.text;
+        font-family: Theme.font-mono;
+        font-size: 17px;
+        font-weight: 600;
+        color: c.primary ? Theme.accent : Theme.fg-soft;
     }
 
-    // Facing direction indicator (top center)
-    Rectangle {
-        x: Theme.clock-center - 50px;
-        y: 12px;
-        width: 100px;
-        height: 40px;
-        border-radius: 8px;
-        background: #3b82f6cc;
-        border-width: 1px;
-        border-color: #ffffff33;
-
-        HorizontalLayout {
-            alignment: center;
-            spacing: 4px;
-            padding: 4px;
-
-            Text {
-                text: "\u{2191}";
-                color: Theme.fg;
-                font-size: Theme.font-lg;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-            Text {
-                text: root.facing-direction;
-                color: Theme.fg;
-                font-size: Theme.font-lg;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-        }
+    // Range labels, just right of the vertical axis above each ring
+    for label[i] in root.ring-labels: Text {
+        x: 245px;
+        y: (240 - 70 * (i + 1) - 14) * 1px;
+        text: label;
+        font-family: Theme.font-mono;
+        font-size: 12px;
+        font-weight: 500;
+        color: Theme.fg-mid;
     }
 
-    // Flight beacons
-    for beacon[idx] in root.beacons: Rectangle {
-        x: Theme.clock-center + beacon.screen-x * 1px - 70px;
-        y: Theme.clock-center + beacon.screen-y * 1px - 28px;
-        width: 140px;
-        height: 56px;
-        background: transparent;
-        clip: false;
-
-        // Callsign - centered above diamond
-        if beacon.callsign != "": Text {
-            x: 0px;
-            y: 0px;
-            width: 140px;
-            height: 16px;
-            text: beacon.callsign;
-            color: Theme.fg;
-            font-size: Theme.font-xs;
-            font-weight: 700;
-            horizontal-alignment: center;
+    // Aircraft
+    for b in root.beacons: Rectangle {
+        // Trail dots, fading in towards the current position
+        for p[i] in b.trail: Dot {
+            cx: p.x * 1px;
+            cy: p.y * 1px;
+            r: (1.5 + 0.3 * i) * 1px;
+            background: Theme.fg-dim;
+            opacity: 0.4 + 0.2 * i;
         }
 
-        // Altitude - left of diamond, right-aligned
-        Text {
-            x: 0px;
-            y: 20px;
-            width: 53px;
-            height: 16px;
-            text: beacon.altitude;
-            color: Theme.fg-dim;
-            font-size: Theme.font-xs;
-            horizontal-alignment: right;
+        // Heading
+        if b.hx != b.x || b.hy != b.y: Line {
+            x1: b.x;
+            y1: b.y;
+            x2: b.hx;
+            y2: b.hy;
+            stroke: b.highlight ? Theme.accent : Theme.fg-soft;
+            stroke-width: 1.5px;
         }
 
-        // Aircraft marker, pointing in towards the centre (as the old app did)
-        Arrow {
-            x: 60px;
-            y: 18px;
-            size: 20px;
-            angle: beacon.rotation + 180;
-            color: Theme.fg;
+        // Marker
+        Rectangle {
+            x: (b.x - 5) * 1px;
+            y: (b.y - 5) * 1px;
+            width: 10px;
+            height: 10px;
+            background: b.highlight ? Theme.accent : Theme.fg-soft;
+        }
+        if b.highlight: Dot {
+            cx: b.x * 1px;
+            cy: b.y * 1px;
+            r: 13px;
+            background: transparent;
+            border-width: 1px;
+            border-color: Theme.accent-soft;
         }
 
-        // Speed - right of diamond, left-aligned
-        Text {
-            x: 87px;
-            y: 20px;
-            width: 53px;
-            height: 16px;
-            text: beacon.speed;
-            color: Theme.fg-dim;
-            font-size: Theme.font-xs;
-            horizontal-alignment: left;
-        }
-
-        // Distance - centered below diamond
-        Text {
-            x: 0px;
-            y: 40px;
-            width: 140px;
-            height: 16px;
-            text: "\{round(beacon.distance-nm * 10) / 10}nm";
-            color: Theme.fg-dim;
-            font-size: Theme.font-xs;
-            horizontal-alignment: center;
-        }
-    }
-
-    // Fetch in progress
-    if root.updating: Text {
-        y: 58px;
-        width: parent.width;
-        text: "Updating...";
-        color: Theme.fg-dim;
-        font-size: Theme.font-sm;
-        horizontal-alignment: center;
-    }
-
-    // Fetch failed
-    if root.error-text != "": Rectangle {
-        x: Theme.clock-center - 140px;
-        y: Theme.display-size - 92px;
-        width: 280px;
-        height: 60px;
-        border-radius: 16px;
-        background: #7f1d1dcc;
-        border-width: 1px;
-        border-color: #f8717180;
-
+        // Label: callsign, then flight level and speed
         VerticalLayout {
-            alignment: center;
-            padding-left: 12px;
-            padding-right: 12px;
+            x: b.label-left ? (b.x - 12 - 130) * 1px : (b.x + 18) * 1px;
+            y: (b.y - 5) * 1px;
+            width: 130px;
+            height: 36px;
+            spacing: 0;
             Text {
-                text: "Connection error";
-                color: #fecaca;
-                font-size: Theme.font-base;
-                font-weight: 700;
-                horizontal-alignment: center;
+                text: b.callsign;
+                font-family: Theme.font-mono;
+                font-size: 14px;
+                font-weight: 600;
+                color: b.highlight ? Theme.accent : Theme.fg;
+                horizontal-alignment: b.label-left ? right : left;
             }
             Text {
-                text: root.error-text;
-                color: #fecacacc;
-                font-size: Theme.font-sm;
-                horizontal-alignment: center;
-                overflow: elide;
+                text: b.info;
+                font-family: Theme.font-mono;
+                font-size: 12px;
+                font-weight: 500;
+                color: b.highlight ? Theme.fg-soft : Theme.fg-mid;
+                horizontal-alignment: b.label-left ? right : left;
             }
         }
     }
 
-    // "Clear skies" message when no flights
-    if root.flight-count == 0 && root.error-text == "": Rectangle {
-        x: Theme.clock-center - 80px;
-        y: Theme.display-size - 60px;
-        width: 160px;
-        height: 40px;
-        border-radius: 20px;
-        background: #ffffff1a;
+    // Own position
+    Shape {
+        commands: "M240 233L245.5 245L240 242L234.5 245Z";
+        fill: Theme.fg;
+    }
 
-        Text {
-            text: "Clear skies";
-            color: #ffffffe6;
-            font-size: Theme.font-lg;
-            font-weight: 500;
+    // Connection error (the design has no status pill; shown only on errors
+    // so a dropped connection doesn't look like an empty sky)
+    if root.error-text != "": Rectangle {
+        x: 240px - self.width / 2;
+        y: 480px - 64px - self.height;
+        width: error-label.preferred-width + 24px;
+        height: 26px;
+        border-radius: 13px;
+        border-width: 1px;
+        border-color: Theme.error;
+        background: Theme.bg;
+
+        error-label := Text {
+            text: root.error-text;
+            font-family: Theme.font-mono;
+            font-size: 11.5px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: Theme.error;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

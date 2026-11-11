@@ -1,274 +1,232 @@
 import { Theme } from "theme.slint";
+import { Ring } from "shapes.slint";
 
-struct DirectionOption {
-    value: string,
-    angle: float,
-}
+// One row on the settings menu: label on the left, current value on the right.
+component SettingRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> highlight: false;  // value in the accent colour
+    in property <bool> opens: false;      // shows a chevron: tapping opens a page
+    callback activated();
 
-export component DirectionSelector inherits Rectangle {
-    width: Theme.display-size;
-    height: Theme.display-size;
-    background: #000000cc;
-    border-radius: Theme.display-radius;
+    height: 52px;
+    border-radius: 26px;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: touch.pressed ? Theme.surface : Theme.bg;
 
-    in property <string> current-direction: "N";
-    // Network the clock is on, shown on the WiFi button
-    in property <string> wifi-network: "";
-    callback direction-selected(string);
-    callback close();
-    callback wifi-settings();
-
-    // Background circle
-    Rectangle {
-        x: Theme.clock-center - 210px;
-        y: Theme.clock-center - 210px;
-        width: 420px;
-        height: 420px;
-        border-radius: 210px;
-        border-width: 4px;
-        border-color: #ffffff1a;
-        background: transparent;
-    }
-
-    // N button (0 degrees = top)
-    Rectangle {
-        property <float> btn-angle: -90;
-        property <string> btn-value: "N";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
+    HorizontalLayout {
+        padding-left: 22px;
+        padding-right: 20px;
+        spacing: 10px;
 
         Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
+            text: root.label;
+            font-family: Theme.font-mono;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            color: Theme.fg-dim;
             vertical-alignment: center;
         }
-        TouchArea { clicked => { root.direction-selected("N"); } }
-    }
-
-    // NE button (45 degrees)
-    Rectangle {
-        property <float> btn-angle: -45;
-        property <string> btn-value: "NE";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
         Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("NE"); } }
-    }
-
-    // E button (90 degrees)
-    Rectangle {
-        property <float> btn-angle: 0;
-        property <string> btn-value: "E";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
-        Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("E"); } }
-    }
-
-    // SE button (135 degrees)
-    Rectangle {
-        property <float> btn-angle: 45;
-        property <string> btn-value: "SE";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
-        Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("SE"); } }
-    }
-
-    // S button (180 degrees)
-    Rectangle {
-        property <float> btn-angle: 90;
-        property <string> btn-value: "S";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
-        Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("S"); } }
-    }
-
-    // SW button (225 degrees)
-    Rectangle {
-        property <float> btn-angle: 135;
-        property <string> btn-value: "SW";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
-        Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("SW"); } }
-    }
-
-    // W button (270 degrees)
-    Rectangle {
-        property <float> btn-angle: 180;
-        property <string> btn-value: "W";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
-        Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("W"); } }
-    }
-
-    // NW button (315 degrees)
-    Rectangle {
-        property <float> btn-angle: -135;
-        property <string> btn-value: "NW";
-        x: Theme.clock-center + cos(self.btn-angle * 1deg) * 175px - 48px;
-        y: Theme.clock-center + sin(self.btn-angle * 1deg) * 175px - 48px;
-        width: 96px;
-        height: 96px;
-        border-radius: 48px;
-        border-width: 2px;
-        border-color: root.current-direction == self.btn-value ? Theme.accent-light : #ffffff80;
-        background: root.current-direction == self.btn-value ? Theme.accent : #000000e6;
-
-        Text {
-            text: parent.btn-value;
-            color: Theme.fg;
-            font-size: Theme.font-xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-        TouchArea { clicked => { root.direction-selected("NW"); } }
-    }
-
-    // Close button at center
-    Rectangle {
-        x: Theme.clock-center - 32px;
-        y: Theme.clock-center - 32px;
-        width: 64px;
-        height: 64px;
-        border-radius: 32px;
-        background: #ffffff1a;
-
-        Text {
-            text: "\u{00d7}";
-            color: #ffffffb3;
-            font-size: Theme.font-4xl;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-
-        TouchArea {
-            clicked => { root.close(); }
-        }
-    }
-
-    // WiFi settings button, between the close button and S
-    Rectangle {
-        x: Theme.clock-center - 80px;
-        y: Theme.clock-center + 46px;
-        width: 160px;
-        height: 40px;
-        border-radius: 20px;
-        background: wifi-touch.pressed ? #ffffff33 : #ffffff1a;
-        border-width: 1px;
-        border-color: #ffffff4d;
-
-        Text {
-            x: 10px;
-            width: parent.width - 20px;
-            text: root.wifi-network != "" ? "WiFi: " + root.wifi-network : "WiFi settings";
-            color: Theme.fg;
-            font-size: Theme.font-sm;
-            horizontal-alignment: center;
+            horizontal-stretch: 1;
+            text: root.value;
+            font-family: Theme.font-display;
+            font-size: Theme.font-base;
+            font-weight: 600;
+            color: root.highlight ? Theme.accent : Theme.fg;
+            horizontal-alignment: right;
             vertical-alignment: center;
             overflow: elide;
         }
+        if root.opens: Text {
+            text: "›";
+            font-family: Theme.font-display;
+            font-size: Theme.font-xl;
+            color: Theme.fg-faint;
+            vertical-alignment: center;
+        }
+    }
 
-        wifi-touch := TouchArea {
-            clicked => { root.wifi-settings(); }
+    touch := TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+// Round outlined button with a centred label.
+component RoundButton inherits Rectangle {
+    in property <string> label;
+    in property <length> size: 56px;
+    in property <length> font-size: Theme.font-3xl;
+    callback activated();
+
+    width: self.size;
+    height: self.size;
+    border-radius: self.size / 2;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: touch.pressed ? Theme.surface : Theme.bg;
+
+    Text {
+        text: root.label;
+        font-family: Theme.font-display;
+        font-size: root.font-size;
+        color: Theme.fg-dim;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+// Settings, opened by double-tapping the centre.
+// Main level: WiFi, Date, Facing. Facing opens the direction ring.
+export component DirectionSelector inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <string> current-direction: "N";
+    // Network the clock is on, shown on the WiFi row
+    in property <string> wifi-network: "";
+    in property <bool> show-date: true;
+    // Settings page address, e.g. "flight-clock.local"
+    in property <string> web-address: "";
+
+    callback direction-selected(string);
+    callback close();
+    callback wifi-settings();
+    callback date-toggled();
+
+    // Which page is showing: the menu, or the direction ring
+    property <bool> picking-direction: false;
+
+    // Swallow taps that miss a button
+    TouchArea { }
+
+    Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
+
+    // --- Main menu ---
+    if !root.picking-direction: Rectangle {
+        Text {
+            y: 104px;
+            width: root.width;
+            text: "SETTINGS";
+            font-family: Theme.font-mono;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+        }
+
+        VerticalLayout {
+            x: 100px;
+            y: 128px;
+            width: 280px;
+            spacing: 12px;
+
+            SettingRow {
+                label: "WIFI";
+                value: root.wifi-network != "" ? root.wifi-network : "Set up";
+                opens: true;
+                activated => { root.wifi-settings(); }
+            }
+            SettingRow {
+                label: "DATE";
+                value: root.show-date ? "On" : "Off";
+                highlight: root.show-date;
+                activated => { root.date-toggled(); }
+            }
+            SettingRow {
+                label: "FACING";
+                value: root.current-direction;
+                opens: true;
+                activated => { root.picking-direction = true; }
+            }
+        }
+
+        if root.web-address != "": Text {
+            y: 318px;
+            width: root.width;
+            text: "MORE ON YOUR PHONE · " + root.web-address;
+            font-family: Theme.font-mono;
+            font-size: 10px;
+            letter-spacing: 1px;
+            color: Theme.fg-faint;
+            horizontal-alignment: center;
+        }
+
+        RoundButton {
+            x: Theme.clock-center - self.width / 2;
+            y: 352px;
+            label: "×";
+            activated => { root.close(); }
+        }
+    }
+
+    // --- Facing: which way the clock faces (top of the radar) ---
+    if root.picking-direction: Rectangle {
+        Ring { r: 175px; border-color: Theme.grid-faint; }
+
+        Text {
+            y: 128px;
+            width: root.width;
+            text: "FACING";
+            font-family: Theme.font-mono;
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 3px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+        }
+
+        for dir in [
+            { value: "N", angle: 0 },
+            { value: "NE", angle: 45 },
+            { value: "E", angle: 90 },
+            { value: "SE", angle: 135 },
+            { value: "S", angle: 180 },
+            { value: "SW", angle: 225 },
+            { value: "W", angle: 270 },
+            { value: "NW", angle: 315 },
+        ]: Rectangle {
+            property <bool> selected: root.current-direction == dir.value;
+            x: Theme.clock-center + sin(dir.angle * 1deg) * 175px - 40px;
+            y: Theme.clock-center - cos(dir.angle * 1deg) * 175px - 40px;
+            width: 80px;
+            height: 80px;
+            border-radius: 40px;
+            border-width: 1px;
+            border-color: self.selected ? Theme.accent : Theme.line;
+            background: self.selected ? Theme.accent : (touch.pressed ? Theme.surface : Theme.bg);
+
+            Text {
+                text: dir.value;
+                font-family: Theme.font-display;
+                font-size: Theme.font-xl;
+                font-weight: 600;
+                color: parent.selected ? Theme.bg : Theme.fg;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            touch := TouchArea {
+                clicked => {
+                    root.direction-selected(dir.value);
+                    root.picking-direction = false;
+                }
+            }
+        }
+
+        // Back to the menu (centre)
+        RoundButton {
+            x: Theme.clock-center - 32px;
+            y: Theme.clock-center - 32px;
+            size: 64px;
+            label: "‹";
+            activated => { root.picking-direction = false; }
         }
     }
 }

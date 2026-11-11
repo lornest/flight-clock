@@ -1,9 +1,9 @@
-use crate::config::Config;
+use crate::config::Location;
 use crate::flight::adsb::{fetch_flights_in_radius, filter_valid_flights};
 use crate::flight::tracker::FlightTracker;
 use crate::flight::types::{FlightInfo, SlimFlight};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Snapshot of flight state sent from poller to UI thread.
@@ -53,9 +53,9 @@ impl NewFlightWithInfo {
                 callsign,
                 aircraft_type,
                 origin_location: origin.location().to_string(),
-                origin_name: origin.display_name().to_string(),
+                origin_name: short_airport_name(origin.location(), origin.display_name()),
                 destination_location: dest.location().to_string(),
-                destination_name: dest.display_name().to_string(),
+                destination_name: short_airport_name(dest.location(), dest.display_name()),
                 has_route: true,
             },
             None => Self {
@@ -74,15 +74,19 @@ impl NewFlightWithInfo {
 
 /// Flight polling loop that runs in a background thread.
 pub struct Poller {
-    config: Config,
+    location: Arc<Mutex<Location>>,
     poll_interval_ms: Arc<AtomicU64>,
     network_ready: Arc<AtomicBool>,
 }
 
 impl Poller {
-    pub fn new(config: Config, poll_interval_ms: Arc<AtomicU64>, network_ready: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        location: Arc<Mutex<Location>>,
+        poll_interval_ms: Arc<AtomicU64>,
+        network_ready: Arc<AtomicBool>,
+    ) -> Self {
         Self {
-            config,
+            location,
             poll_interval_ms,
             network_ready,
         }
@@ -106,7 +110,8 @@ impl Poller {
             let interval = self.poll_interval_ms.load(Ordering::Relaxed);
             on_event(PollEvent::Fetching);
 
-            match fetch_flights_in_radius(self.config.latitude, self.config.longitude, self.config.radius_nm) {
+            let loc = *self.location.lock().unwrap();
+            match fetch_flights_in_radius(loc.lat, loc.lon, loc.max_radius_nm) {
                 Ok(flights) => {
                     let valid = filter_valid_flights(flights);
                     let new_ids = tracker.update_flights(valid);
@@ -147,5 +152,77 @@ impl Poller {
             std::thread::sleep(step);
             interval = self.poll_interval_ms.load(Ordering::Relaxed);
         }
+    }
+}
+
+/// Shorten an airport name for the alert card, where the city is already
+/// shown on the line above:
+/// - drop a trailing "Airport"                    "Oslo Gardermoen Airport" -> "Oslo Gardermoen"
+/// - drop the city from the front                 "Oslo Gardermoen" -> "Gardermoen"
+/// - nothing left means it just repeats the city  "Edinburgh Airport" -> ""
+fn short_airport_name(city: &str, name: &str) -> String {
+    let mut short = name.trim();
+
+    if let Some(rest) = strip_suffix_ignore_case(short, "airport") {
+        short = rest.trim_end();
+    }
+
+    let city = city.trim();
+    if !city.is_empty() {
+        if short.eq_ignore_ascii_case(city) {
+            return String::new();
+        }
+        if let Some(rest) = strip_prefix_ignore_case(short, city) {
+            // Only at a word boundary: "Oslo Gardermoen", not "Oslotown"
+            if rest.starts_with(' ') {
+                short = rest.trim_start();
+            }
+        }
+    }
+
+    short.to_string()
+}
+
+fn strip_suffix_ignore_case<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
+    let cut = s.len().checked_sub(suffix.len())?;
+    (s.is_char_boundary(cut) && s[cut..].eq_ignore_ascii_case(suffix)).then(|| &s[..cut])
+}
+
+fn strip_prefix_ignore_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let cut = prefix.len();
+    (s.len() >= cut && s.is_char_boundary(cut) && s[..cut].eq_ignore_ascii_case(prefix)).then(|| &s[cut..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_airport_name;
+
+    #[test]
+    fn drops_trailing_airport() {
+        assert_eq!(short_airport_name("Oslo", "Oslo Gardermoen Airport"), "Gardermoen");
+        assert_eq!(short_airport_name("Stansted", "London Stansted Airport"), "London Stansted");
+    }
+
+    #[test]
+    fn drops_leading_city() {
+        assert_eq!(short_airport_name("London", "London Heathrow"), "Heathrow");
+        assert_eq!(
+            short_airport_name("New York", "New York John F Kennedy International Airport"),
+            "John F Kennedy International"
+        );
+    }
+
+    #[test]
+    fn empty_when_it_only_repeats_the_city() {
+        assert_eq!(short_airport_name("Edinburgh", "Edinburgh Airport"), "");
+        assert_eq!(short_airport_name("Paris", "paris"), "");
+    }
+
+    #[test]
+    fn leaves_other_names_alone() {
+        assert_eq!(short_airport_name("Amsterdam", "Schiphol"), "Schiphol");
+        assert_eq!(short_airport_name("Oslo", "Oslotown Field"), "Oslotown Field");
+        assert_eq!(short_airport_name("", "Airport"), "");
+        assert_eq!(short_airport_name("Zürich", "Zürich Airport"), "");
     }
 }

@@ -1,18 +1,13 @@
 import { Theme } from "theme.slint";
 
-// Shapes drawn with Path instead of `transform-rotation`.
-// The software renderer used on the Pi (linuxkms-software) ignores
-// transforms, so anything that needs to point in a direction is built from
-// path coordinates computed from an angle.
+// Building blocks drawn with Path and plain rectangles.
+// The software renderer used on the Pi ignores `transform-rotation`, so
+// anything angled is built from coordinates computed from the angle.
+// All of these use display coordinates: 0..480 on both axes, centre 240,240.
 
-// A straight line in display coordinates (0..480 on both axes).
-// Place it at x: 0, y: 0 inside a full-display parent.
-export component Line inherits Path {
-    in property <float> x1;
-    in property <float> y1;
-    in property <float> x2;
-    in property <float> y2;
-
+// A full-display path in display coordinates. Set `commands` (SVG path data),
+// `stroke`/`fill` as needed.
+export component Shape inherits Path {
     x: 0;
     y: 0;
     width: Theme.display-size;
@@ -21,50 +16,163 @@ export component Line inherits Path {
     viewbox-y: 0;
     viewbox-width: 480;
     viewbox-height: 480;
+}
+
+// A straight line between two points.
+// (Inherits Path directly: a component can't add path elements to a base
+// that is already a Path component.)
+export component Line inherits Path {
+    x: 0;
+    y: 0;
+    width: Theme.display-size;
+    height: Theme.display-size;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: 480;
+    viewbox-height: 480;
+    in property <float> x1;
+    in property <float> y1;
+    in property <float> x2;
+    in property <float> y2;
+
     stroke-line-cap: round;
 
     MoveTo { x: root.x1; y: root.y1; }
     LineTo { x: root.x2; y: root.y2; }
 }
 
-// A line from the display centre outwards at `angle` degrees clockwise from
-// 12 o'clock. Used for clock hands.
+// A line from `tail` behind the centre out to `length`, at `angle` degrees
+// clockwise from 12 o'clock.
 export component Spoke inherits Line {
     in property <float> angle;
     in property <float> length;
+    in property <float> tail: 0;
 
-    x1: 240;
-    y1: 240;
+    x1: 240 - root.tail * sin(root.angle * 1deg);
+    y1: 240 + root.tail * cos(root.angle * 1deg);
     x2: 240 + root.length * sin(root.angle * 1deg);
     y2: 240 - root.length * cos(root.angle * 1deg);
 }
 
-// A filled triangle pointing `angle` degrees clockwise from up, centred in a
-// `size` x `size` box. Used for aircraft markers.
-export component Arrow inherits Path {
+// A tapered clock hand: `base-width` at the tail, narrowing to `tip-width`
+// 8 units before a pointed tip at `length`.
+export component Needle inherits Path {
+    x: 0;
+    y: 0;
+    width: Theme.display-size;
+    height: Theme.display-size;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: 480;
+    viewbox-height: 480;
     in property <float> angle;
-    in property <length> size: 20px;
+    in property <float> length;
+    in property <float> tail;
+    in property <float> base-width;
+    in property <float> tip-width;
     in property <color> color: Theme.fg;
 
-    width: root.size;
-    height: root.size;
-    viewbox-x: -10;
-    viewbox-y: -10;
-    viewbox-width: 20;
-    viewbox-height: 20;
+    // Unit vectors: along the hand, and perpendicular (clockwise)
+    property <float> s: sin(root.angle * 1deg);
+    property <float> c: cos(root.angle * 1deg);
+    property <float> shoulder: root.length - 8;
+
     fill: root.color;
 
     MoveTo {
-        x: 9 * sin(root.angle * 1deg);
-        y: -9 * cos(root.angle * 1deg);
+        x: 240 - root.tail * root.s - root.base-width / 2 * root.c;
+        y: 240 + root.tail * root.c - root.base-width / 2 * root.s;
     }
     LineTo {
-        x: 8 * sin((root.angle + 140) * 1deg);
-        y: -8 * cos((root.angle + 140) * 1deg);
+        x: 240 + root.shoulder * root.s - root.tip-width / 2 * root.c;
+        y: 240 - root.shoulder * root.c - root.tip-width / 2 * root.s;
     }
     LineTo {
-        x: 8 * sin((root.angle + 220) * 1deg);
-        y: -8 * cos((root.angle + 220) * 1deg);
+        x: 240 + root.length * root.s;
+        y: 240 - root.length * root.c;
+    }
+    LineTo {
+        x: 240 + root.shoulder * root.s + root.tip-width / 2 * root.c;
+        y: 240 - root.shoulder * root.c + root.tip-width / 2 * root.s;
+    }
+    LineTo {
+        x: 240 - root.tail * root.s + root.base-width / 2 * root.c;
+        y: 240 + root.tail * root.c + root.base-width / 2 * root.s;
     }
     Close { }
+}
+
+// A circle outline of radius `r` centred on the display.
+export component Ring inherits Rectangle {
+    in property <length> r;
+    x: Theme.clock-center - self.r;
+    y: Theme.clock-center - self.r;
+    width: self.r * 2;
+    height: self.r * 2;
+    border-radius: self.r;
+    border-width: 1px;
+    background: transparent;
+}
+
+// A filled dot of radius `r` centred at (cx, cy).
+export component Dot inherits Rectangle {
+    in property <length> cx;
+    in property <length> cy;
+    in property <length> r;
+    x: self.cx - self.r;
+    y: self.cy - self.r;
+    width: self.r * 2;
+    height: self.r * 2;
+    border-radius: self.r;
+}
+
+// Text centred on (cx, cy).
+export component CenteredText inherits Text {
+    in property <length> cx;
+    in property <length> cy;
+    x: self.cx - 150px;
+    y: self.cy - 30px;
+    width: 300px;
+    height: 60px;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+}
+
+// The two-tone "FlightClock" wordmark, centred on (cx, cy).
+export component Wordmark inherits Rectangle {
+    in property <length> cx;
+    in property <length> cy;
+    in property <length> size: 18px;
+    in property <length> spacing: -0.4px;
+    in property <color> backdrop: transparent;
+    in property <length> pad-x: 0;
+
+    x: self.cx - self.width / 2;
+    y: self.cy - self.height / 2;
+    width: row.preferred-width + 2 * self.pad-x;
+    height: self.size * 1.3;
+    background: self.backdrop;
+
+    row := HorizontalLayout {
+        alignment: center;
+        spacing: 0;
+        Text {
+            text: "Flight";
+            font-family: Theme.font-display;
+            font-size: root.size;
+            font-weight: 600;
+            letter-spacing: root.spacing;
+            color: Theme.fg;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "Clock";
+            font-family: Theme.font-display;
+            font-size: root.size;
+            font-weight: 600;
+            letter-spacing: root.spacing;
+            color: Theme.accent;
+            vertical-alignment: center;
+        }
+    }
 }

@@ -1,9 +1,11 @@
-//! Captive-portal web server for WiFi setup.
+//! The app's web server: WiFi setup portal and settings page.
 //!
-//! Runs for the life of the app on port 80, but only answers while the setup
-//! hotspot is up (`PortalState::active`); otherwise every request gets a 404,
-//! so the page can't be used to change WiFi from the LAN.
+//! Runs for the life of the app. While the setup hotspot is up
+//! (`PortalState::active`) it is the captive portal for joining WiFi. The rest
+//! of the time it serves the settings page (src/settings_web.rs), which needs
+//! a paired phone; the WiFi setup pages are never reachable from the LAN.
 
+use crate::settings_web::SettingsWeb;
 use crate::wifi::manager::{ScannedNetwork, AP_IP, AP_SSID};
 use crate::wifi::supervisor::WifiCommand;
 use std::io::Read;
@@ -31,23 +33,35 @@ pub struct PortalState {
 pub struct Portal {
     state: Arc<Mutex<PortalState>>,
     commands: Sender<WifiCommand>,
+    settings: Arc<SettingsWeb>,
+    port: u16,
 }
 
 impl Portal {
-    pub fn new(state: Arc<Mutex<PortalState>>, commands: Sender<WifiCommand>) -> Self {
-        Self { state, commands }
+    pub fn new(
+        state: Arc<Mutex<PortalState>>,
+        commands: Sender<WifiCommand>,
+        settings: Arc<SettingsWeb>,
+        port: u16,
+    ) -> Self {
+        Self {
+            state,
+            commands,
+            settings,
+            port,
+        }
     }
 
-    /// Serve on port 80 forever.
+    /// Serve forever.
     pub fn serve(&self) {
-        let server = match Server::http("0.0.0.0:80") {
+        let server = match Server::http(("0.0.0.0", self.port)) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Failed to start setup portal on port 80: {}", e);
+                eprintln!("Failed to start web server on port {}: {}", self.port, e);
                 return;
             }
         };
-        eprintln!("Setup portal listening on port 80");
+        eprintln!("Web server listening on port {}", self.port);
 
         for request in server.incoming_requests() {
             let active = {
@@ -58,7 +72,7 @@ impl Portal {
                 state.active
             };
             if !active {
-                let _ = request.respond(Response::from_string("Not found").with_status_code(404));
+                self.settings.handle(request);
                 continue;
             }
 
@@ -208,7 +222,7 @@ button{{width:100%;padding:14px;border:none;border-radius:8px;background:#3b82f6
     )
 }
 
-fn parse_form(body: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_form(body: &str) -> Vec<(String, String)> {
     body.split('&')
         .filter(|p| !p.is_empty())
         .map(|pair| {
@@ -220,7 +234,7 @@ fn parse_form(body: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn html_escape(s: &str) -> String {
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

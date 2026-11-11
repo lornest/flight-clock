@@ -1,13 +1,15 @@
 import { Theme } from "theme.slint";
-import { Arrow, Line } from "shapes.slint";
+import { Line, Ring } from "shapes.slint";
 
-// Data struct for a beacon positioned on the alert screen
+// An aircraft on the alert screen. Absolute display coordinates.
 export struct AlertBeacon {
     hex: string,
     callsign: string,
-    screen-x: float,
-    screen-y: float,
-    rotation: float,
+    x: float,
+    y: float,
+    // End of the heading line (same as x/y when the track is unknown)
+    hx: float,
+    hy: float,
     is-new: bool,
 }
 
@@ -22,10 +24,12 @@ export struct AlertFlightDetail {
     aircraft-type: string,
 }
 
+// New-flight alert, styled to match the radar: aircraft around the edge,
+// route cards in the middle. New aircraft are drawn in the accent colour.
 export component Alert inherits Rectangle {
     width: Theme.display-size;
     height: Theme.display-size;
-    background: Theme.alert-bg;
+    background: Theme.bg;
 
     in property <[AlertBeacon]> beacons: [];
     in property <[AlertFlightDetail]> flight-details: [];
@@ -34,85 +38,73 @@ export component Alert inherits Rectangle {
 
     callback dismiss();
 
-    // Ring (static: continuous animation makes the software renderer redraw
-    // the whole screen every frame, which pins a Pi Zero 2W's CPU)
-    Rectangle {
-        x: 32px;
-        y: 32px;
-        width: Theme.display-size - 64px;
-        height: Theme.display-size - 64px;
-        border-radius: self.width / 2;
-        border-width: 2px;
-        border-color: #ffffff26;
-    }
+    // Scope (static)
+    Ring { r: 236px; border-width: 2px; border-color: Theme.accent-soft; }
+    Ring { r: 210px; border-color: Theme.grid; }
+    Ring { r: 140px; border-color: Theme.grid-faint; }
+    Line { x1: 240; y1: 30; x2: 240; y2: 450; stroke: Theme.grid-faint; stroke-width: 1px; }
+    Line { x1: 30; y1: 240; x2: 450; y2: 240; stroke: Theme.grid-faint; stroke-width: 1px; }
 
-    // Background lines (decorative, static for the same reason)
-    for i in 4: Line {
-        property <float> a: i * 45 + 22.5;
-        x1: 240 - 240 * sin(self.a * 1deg);
-        y1: 240 + 240 * cos(self.a * 1deg);
-        x2: 240 + 240 * sin(self.a * 1deg);
-        y2: 240 - 240 * cos(self.a * 1deg);
-        stroke: #ffffff1a;
-        stroke-width: 1px;
-    }
-
-    // Flight beacons
-    for beacon[idx] in root.beacons: Rectangle {
-        x: Theme.clock-center + beacon.screen-x * 1px - 10px;
-        y: Theme.clock-center + beacon.screen-y * 1px - 10px;
-        width: 20px;
-        height: 20px;
-        background: transparent;
-
-        // Aircraft marker, pointing in towards the centre
-        Arrow {
-            x: 0;
-            y: 0;
-            size: 20px;
-            angle: beacon.rotation + 180;
-            color: Theme.beacon-color;
+    // Aircraft
+    for b in root.beacons: Rectangle {
+        if b.hx != b.x || b.hy != b.y: Line {
+            x1: b.x;
+            y1: b.y;
+            x2: b.hx;
+            y2: b.hy;
+            stroke: b.is-new ? Theme.accent : Theme.fg-soft;
+            stroke-width: 1.5px;
         }
-
-        // Callsign label below beacon
-        if beacon.callsign != "": Text {
-            y: 22px;
-            text: beacon.callsign;
-            color: Theme.beacon-color;
-            font-size: Theme.font-sm;
-            font-weight: 600;
+        Rectangle {
+            x: (b.x - 5) * 1px;
+            y: (b.y - 5) * 1px;
+            width: 10px;
+            height: 10px;
+            background: b.is-new ? Theme.accent : Theme.fg-soft;
+        }
+        if b.callsign != "": Text {
+            x: (b.x - 60) * 1px;
+            y: (b.y + 9) * 1px;
+            width: 120px;
+            text: b.callsign;
+            font-family: Theme.font-mono;
+            font-size: 10.5px;
+            font-weight: 500;
+            color: b.is-new ? Theme.accent : Theme.fg-dim;
             horizontal-alignment: center;
         }
     }
 
-    // Flight detail cards in center
+    // Heading + flight cards
     VerticalLayout {
         alignment: center;
-        padding-left: 60px;
-        padding-right: 60px;
-        spacing: 12px;
+        padding-left: 64px;
+        padding-right: 64px;
+        spacing: 10px;
 
-        for detail[idx] in root.flight-details: Rectangle {
-            background: #ffffff1a;
-            border-radius: 12px;
-            height: detail.has-route ? 120px : 92px;
+        for detail in root.flight-details: Rectangle {
+            background: Theme.surface;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Theme.line;
             min-width: 300px;
+            height: detail.has-route ? 128px : 92px;
 
             VerticalLayout {
                 alignment: center;
                 padding: 12px;
-                spacing: 8px;
+                spacing: 6px;
 
-                // Callsign
                 Text {
                     text: detail.callsign;
+                    font-family: Theme.font-display;
+                    font-size: 34px;
+                    font-weight: 600;
+                    letter-spacing: -0.5px;
                     color: Theme.fg;
-                    font-size: Theme.font-3xl;
-                    font-weight: 700;
                     horizontal-alignment: center;
                 }
 
-                // Route: origin -> destination
                 if detail.has-route: HorizontalLayout {
                     alignment: center;
                     spacing: 12px;
@@ -121,24 +113,27 @@ export component Alert inherits Rectangle {
                         alignment: center;
                         Text {
                             text: detail.origin-location;
-                            color: #ffffffcc;
-                            font-size: Theme.font-xl;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-lg;
                             font-weight: 500;
+                            color: Theme.fg;
                             horizontal-alignment: center;
                         }
                         Text {
                             text: detail.origin-name;
+                            font-family: Theme.font-mono;
+                            font-size: 14px;
                             color: Theme.fg-dim;
-                            font-size: Theme.font-base;
                             horizontal-alignment: center;
                             wrap: word-wrap;
                         }
                     }
 
                     Text {
-                        text: "\u{2192}";
-                        color: #ffffffb3;
-                        font-size: Theme.font-xl;
+                        text: "→";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-lg;
+                        color: Theme.accent;
                         vertical-alignment: center;
                     }
 
@@ -146,15 +141,17 @@ export component Alert inherits Rectangle {
                         alignment: center;
                         Text {
                             text: detail.destination-location;
-                            color: #ffffffcc;
-                            font-size: Theme.font-xl;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-lg;
                             font-weight: 500;
+                            color: Theme.fg;
                             horizontal-alignment: center;
                         }
                         Text {
                             text: detail.destination-name;
+                            font-family: Theme.font-mono;
+                            font-size: 14px;
                             color: Theme.fg-dim;
-                            font-size: Theme.font-base;
                             horizontal-alignment: center;
                             wrap: word-wrap;
                         }
@@ -163,40 +160,47 @@ export component Alert inherits Rectangle {
 
                 // No route found: show the aircraft type if we have it
                 if !detail.has-route: Text {
-                    text: detail.aircraft-type != "" ? "Aircraft: " + detail.aircraft-type : "Route information unavailable";
+                    text: detail.aircraft-type != "" ? "AIRCRAFT · " + detail.aircraft-type : "ROUTE UNAVAILABLE";
+                    font-family: Theme.font-mono;
+                    font-size: 12px;
+                    letter-spacing: 1.5px;
                     color: Theme.fg-dim;
-                    font-size: Theme.font-base;
                     horizontal-alignment: center;
                 }
             }
         }
 
         if root.more-count > 0: Text {
-            text: "+\{root.more-count} more";
+            text: "+\{root.more-count} MORE";
+            font-family: Theme.font-mono;
+            font-size: 11px;
+            letter-spacing: 2px;
             color: Theme.fg-dim;
-            font-size: Theme.font-base;
             horizontal-alignment: center;
         }
     }
 
-    // Close button (top-right)
+    // Close button (top-right, inside the round display)
     Rectangle {
-        x: Theme.display-size - 48px;
-        y: 16px;
-        width: 32px;
-        height: 32px;
-        border-radius: 16px;
-        background: #ffffff1a;
+        x: 352px;
+        y: 72px;
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: close-touch.pressed ? Theme.surface : Theme.bg;
 
         Text {
-            text: "\u{00d7}";
-            color: #ffffffb3;
+            text: "×";
+            font-family: Theme.font-display;
+            color: Theme.fg-dim;
             font-size: Theme.font-xl;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
 
-        TouchArea {
+        close-touch := TouchArea {
             clicked => { root.dismiss(); }
         }
     }

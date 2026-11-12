@@ -577,3 +577,65 @@ mod tests {
         );
     }
 }
+
+/// The WiFi and host operations the supervisor needs. `WifiManager` is the
+/// real implementation; tests use a fake.
+pub trait Network {
+    fn has_saved_network(&self) -> bool;
+    fn is_connected(&self) -> bool;
+    fn current_ssid(&self) -> Option<String>;
+    fn scan_networks(&self) -> Vec<ScannedNetwork>;
+    fn start_ap(&mut self) -> Result<(), String>;
+    fn stop_ap(&mut self);
+    fn connect(&mut self, ssid: &str, password: &str) -> Result<(), String>;
+    fn reconnect_saved(&mut self, timeout: Duration) -> bool;
+    fn wait_connected(&self, timeout: Duration) -> bool;
+    /// Make mDNS announce the real hostname again after the hotspot.
+    fn reclaim_hostname(&mut self);
+}
+
+impl Network for WifiManager {
+    fn has_saved_network(&self) -> bool {
+        WifiManager::has_saved_network(self)
+    }
+    fn is_connected(&self) -> bool {
+        WifiManager::is_connected(self)
+    }
+    fn current_ssid(&self) -> Option<String> {
+        WifiManager::current_ssid(self)
+    }
+    fn scan_networks(&self) -> Vec<ScannedNetwork> {
+        WifiManager::scan_networks(self)
+    }
+    fn start_ap(&mut self) -> Result<(), String> {
+        WifiManager::start_ap(self)
+    }
+    fn stop_ap(&mut self) {
+        WifiManager::stop_ap(self)
+    }
+    fn connect(&mut self, ssid: &str, password: &str) -> Result<(), String> {
+        WifiManager::connect(self, ssid, password)
+    }
+    fn reconnect_saved(&mut self, timeout: Duration) -> bool {
+        WifiManager::reconnect_saved(self, timeout)
+    }
+    fn wait_connected(&self, timeout: Duration) -> bool {
+        WifiManager::wait_connected(self, timeout)
+    }
+
+    /// When wlan0 drops for the hotspot and comes back, avahi can mistake its
+    /// own stale announcement for another device, rename the clock to
+    /// `<host>-2.local` and stop answering on the usual name. A restart makes
+    /// it announce the real hostname again. `try-restart` does nothing if
+    /// avahi isn't running.
+    fn reclaim_hostname(&mut self) {
+        match Command::new("systemctl")
+            .args(["try-restart", "avahi-daemon.service"])
+            .status()
+        {
+            Ok(s) if s.success() => eprintln!("Restarted avahi to reclaim the .local name"),
+            Ok(s) => eprintln!("avahi restart exited with {}", s),
+            Err(e) => eprintln!("avahi restart failed: {}", e),
+        }
+    }
+}

@@ -11,7 +11,7 @@ pub const BACKGROUNDS: [(&str, &str, &str, &str, &str); 2] = [
 ];
 
 /// Accent colours from the design: (config id, name, hex), in the design's order.
-pub const DEFAULT_ACCENT: &str = "coral";
+pub const DEFAULT_ACCENT: &str = "amber";
 pub const ACCENTS: [(&str, &str, &str); 5] = [
     ("amber", "Amber", "#FFB547"),
     ("powder-blue", "Powder blue", "#7FD3D8"),
@@ -114,7 +114,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// The accent colour as "#RRGGBB"; the default (coral) if the id is unknown.
+    /// The accent colour as "#RRGGBB"; the default (amber) if the id is unknown.
     pub fn accent_hex(&self) -> &'static str {
         let find = |want: &str| ACCENTS.iter().find(|(id, _, _)| *id == want).map(|(_, _, hex)| *hex);
         find(&self.accent).or_else(|| find(DEFAULT_ACCENT)).unwrap_or(ACCENTS[0].2)
@@ -186,26 +186,26 @@ mod accent_tests {
     use super::*;
 
     #[test]
-    fn defaults_to_coral() {
-        assert_eq!(Config::default().accent_hex(), "#FF7F6B");
+    fn defaults_to_amber() {
+        assert_eq!(Config::default().accent_hex(), "#FFB547");
     }
 
     #[test]
-    fn unknown_accent_falls_back_to_coral() {
+    fn unknown_accent_falls_back_to_amber() {
         let cfg = Config { accent: "magenta".into(), ..Config::default() };
-        assert_eq!(cfg.accent_hex(), "#FF7F6B");
+        assert_eq!(cfg.accent_hex(), "#FFB547");
     }
 
     #[test]
-    fn amber_still_selectable() {
-        let cfg = Config { accent: "amber".into(), ..Config::default() };
-        assert_eq!(cfg.accent_hex(), "#FFB547");
+    fn coral_selectable() {
+        let cfg = Config { accent: "coral".into(), ..Config::default() };
+        assert_eq!(cfg.accent_hex(), "#FF7F6B");
     }
 
     #[test]
     fn old_config_without_colours_loads() {
         let cfg: Config = serde_json::from_str(r#"{"latitude":55.9,"longitude":-3.2}"#).unwrap();
-        assert_eq!(cfg.accent, "coral");
+        assert_eq!(cfg.accent, "amber");
         assert_eq!(cfg.background, "aviator-blue");
     }
 

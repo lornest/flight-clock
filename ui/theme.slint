@@ -1,4 +1,4 @@
-// FlightClock brand theme: night-sky ground, amber accent,
+// FlightClock brand theme: night-sky ground, one accent colour,
 // Space Grotesk for display text, JetBrains Mono for data.
 
 // Fonts are compiled into the binary (OFL licences in assets/fonts).
@@ -21,8 +21,10 @@ export global Theme {
     out property <string> font-clock: "B612";      // digital face time
 
     // Palette
-    out property <color> bg: #0B1118;           // ground
-    out property <color> surface: #121A23;      // cards, buttons
+    // Ground, surface and date panel: set from the config (aviator blue or black)
+    in-out property <color> bg: #0B1118;
+    in-out property <color> surface: #121A23;   // cards, buttons
+    in-out property <color> panel: #141D28;     // date panel
     out property <color> fg: #EEF2F6;           // primary text, hands
     out property <color> fg-soft: #C9D3DE;      // hour ticks, aircraft
     out property <color> fg-mid: #A3B1C2;       // radar data labels
@@ -32,14 +34,16 @@ export global Theme {
     out property <color> line-tick: #3A4757;    // minute ticks
     out property <color> grid: #223040;         // radar rings
     out property <color> grid-faint: #161F2A;   // faint rings / diagonals
-    out property <color> accent: #FFB547;       // amber
-    out property <color> accent-soft: #FFB54799;
+    // Accent: set from the config (amber, powder blue, coral, lime, lilac)
+    in-out property <color> accent: #FF7F6B;   // coral by default
+    out property <color> accent-soft: accent.with-alpha(0.6);
+    out property <color> accent-faint: accent.with-alpha(0.22);
     out property <color> error: #F87171;
 
     // Legacy aliases used by older components
-    out property <color> accent-light: #FFB547;
-    out property <color> beacon-color: #FFB547;
-    out property <color> alert-bg: #0B1118;
+    out property <color> accent-light: accent;
+    out property <color> beacon-color: accent;
+    out property <color> alert-bg: bg;
     out property <color> ring-color: #223040;
 
     // Clock

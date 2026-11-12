@@ -3,6 +3,19 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
+## [0.2.2] - 2026-11-12
+
+### Added
+- Accent colours from the design: Amber, Powder blue, Coral, Lime and Lilac,
+  chosen on the settings page. The whole clock and the settings page follow
+  the choice.
+- Background choice: Aviator blue or Black.
+
+### Changed
+- Coral is now the default accent. Clocks that never picked a colour switch
+  from amber to coral; amber is still available on the settings page.
+- Bigger text and rows in the settings menu on the clock.
+
 ## [0.2.1] - 2026-11-12
 
 ### Fixed

@@ -12,7 +12,7 @@
 //! Location can be filled in from a UK postcode: the *phone* looks it up on
 //! postcodes.io; the clock itself never contacts it.
 
-use crate::config::{config_path, Config};
+use crate::config::{config_path, Config, ACCENTS, BACKGROUNDS};
 use crate::update;
 use crate::wifi::portal::{html_escape, parse_form};
 use std::io::Read;
@@ -288,7 +288,7 @@ impl SettingsWeb {
             )
         };
 
-        page("Pair", &body)
+        page("Pair", &body, &Config::load(None))
     }
 }
 
@@ -343,7 +343,28 @@ fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, Str
         return Err("Pick an update channel.".into());
     }
 
+    // Missing (e.g. a page loaded before colours existed): keep the current one
+    let accent = field(form, "accent");
+    let accent = if accent.is_empty() {
+        current.accent.clone()
+    } else if ACCENTS.iter().any(|(id, _, _)| *id == accent) {
+        accent
+    } else {
+        return Err("Pick a colour.".into());
+    };
+
+    let background = field(form, "background");
+    let background = if background.is_empty() {
+        current.background.clone()
+    } else if BACKGROUNDS.iter().any(|(id, ..)| *id == background) {
+        background
+    } else {
+        return Err("Pick a background.".into());
+    };
+
     let mut updated = current.clone();
+    updated.accent = accent;
+    updated.background = background;
     updated.update_channel = channel;
     updated.auto_update = form.iter().any(|(k, _)| k == "auto_update");
     updated.latitude = (lat * 1e6).round() / 1e6;
@@ -377,6 +398,26 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         .collect();
 
     let face_checked = |f: &str| if cfg.clock_face == f { " checked" } else { "" };
+
+    let accent_options: String = ACCENTS
+        .iter()
+        .map(|(id, name, hex)| {
+            format!(
+                r#"<label class="swatch"><input type="radio" name="accent" value="{id}" data-hex="{hex}"{c}><span><i style="--c:{hex}"></i>{name}</span></label>"#,
+                c = if cfg.accent_hex() == *hex { " checked" } else { "" }
+            )
+        })
+        .collect();
+
+    let background_options: String = BACKGROUNDS
+        .iter()
+        .map(|(id, name, bg, surface, _)| {
+            format!(
+                r#"<label><input type="radio" name="background" value="{id}" data-bg="{bg}" data-surface="{surface}"{c}><span><i class="dot" style="--c:{bg}"></i>{name}</span></label>"#,
+                c = if cfg.background_hex().0 == *bg { " checked" } else { "" }
+            )
+        })
+        .collect();
 
     let body = format!(
         r#"{banner}
@@ -412,6 +453,13 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
       <label><input type="radio" name="clock_face" value="digital"{digital}><span>Digital</span></label>
     </div>
     <label class="switch"><input type="checkbox" name="show_date"{date}><span class="track"></span><span>Show the date</span></label>
+  </section>
+
+  <section class="card">
+    <h2 class="label">Colour</h2>
+    <div class="swatches">{accent_options}</div>
+    <h2 class="label">Background</h2>
+    <div class="segmented">{background_options}</div>
   </section>
 
   <section class="card">
@@ -460,6 +508,19 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
       .catch(function () {{ status.textContent = "Couldn't find that postcode."; }});
   }}
   document.getElementById('lookup').addEventListener('click', lookup);
+  // Preview a colour on this page straight away; Save applies it to the clock
+  document.querySelectorAll('input[name=accent]').forEach(function (r) {{
+    r.addEventListener('change', function () {{
+      document.documentElement.style.setProperty('--accent', r.dataset.hex);
+    }});
+  }});
+  document.querySelectorAll('input[name=background]').forEach(function (r) {{
+    r.addEventListener('change', function () {{
+      var s = document.documentElement.style;
+      s.setProperty('--bg', r.dataset.bg);
+      s.setProperty('--surface', r.dataset.surface);
+    }});
+  }});
   pc.addEventListener('keydown', function (e) {{ if (e.key === 'Enter') {{ e.preventDefault(); lookup(); }} }});
 }})();
 </script>"#,
@@ -470,6 +531,8 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         rmin = RADIUS_MIN_NM,
         rmax = RADIUS_MAX_NM,
         facing_options = facing_options,
+        accent_options = accent_options,
+        background_options = background_options,
         analog = face_checked("analog"),
         digital = face_checked("digital"),
         date = if cfg.show_date { " checked" } else { "" },
@@ -484,7 +547,7 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         },
     );
 
-    page("Settings", &body)
+    page("Settings", &body, cfg)
 }
 
 /// Version and last update result, for the Updates card.
@@ -526,18 +589,20 @@ fn ago(unix_secs: u64) -> String {
     }
 }
 
-fn page(title: &str, body: &str) -> String {
+fn page(title: &str, body: &str, cfg: &Config) -> String {
+    let accent = cfg.accent_hex();
+    let (bg, surface, _) = cfg.background_hex();
     format!(
         r##"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#0B1118">
+<meta name="theme-color" content="{bg}">
 <title>FlightClock · {title}</title>
 <style>
 @font-face{{font-family:"Space Grotesk";font-weight:600;src:url(/fonts/display.ttf) format("truetype")}}
 @font-face{{font-family:"Space Grotesk";font-weight:500;src:url(/fonts/display-medium.ttf) format("truetype")}}
 @font-face{{font-family:"JetBrains Mono";font-weight:500;src:url(/fonts/mono.ttf) format("truetype")}}
-:root{{--bg:#0B1118;--surface:#121A23;--fg:#EEF2F6;--soft:#C9D3DE;--dim:#8A9AAD;--line:#2A3646;--accent:#FFB547;--error:#F87171;--ok:#4ADE80}}
+:root{{--bg:{bg};--surface:{surface};--fg:#EEF2F6;--soft:#C9D3DE;--dim:#8A9AAD;--line:#2A3646;--accent:{accent};--error:#F87171;--ok:#4ADE80}}
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:var(--bg);color:var(--fg);font-family:"Space Grotesk",system-ui,sans-serif;font-weight:500;line-height:1.4;padding:24px 16px 48px;max-width:460px;margin:0 auto}}
 header{{text-align:center;margin:8px 0 24px}}
@@ -560,7 +625,7 @@ button{{font:inherit;font-size:16px;border-radius:999px;padding:13px 20px;cursor
 .banner{{border-radius:12px;padding:12px 14px;margin-bottom:16px;border:1px solid}}
 .banner.ok{{color:var(--ok);border-color:#4ADE8066;background:#4ADE8014}}
 .banner.error{{color:var(--error);border-color:#F8717166;background:#F8717114}}
-.banner.info{{color:var(--accent);border-color:#FFB54766;background:#FFB54714}}
+.banner.info{{color:var(--accent);border-color:{accent}66;background:{accent}14}}
 .update-actions{{margin-top:16px;align-items:stretch}}.update-actions form{{flex:1}}.wide{{width:100%}}
 .status{{font-size:15px}}.status b{{font-weight:600}}.status .ok{{color:var(--ok)}}.status .warn{{color:var(--accent)}}.status .bad{{color:var(--error)}}
 .pills{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}}
@@ -578,6 +643,13 @@ button{{font:inherit;font-size:16px;border-radius:999px;padding:13px 20px;cursor
 .switch input:checked+.track{{background:var(--accent);border-color:var(--accent)}}
 .switch input:checked+.track::after{{transform:translateX(18px);background:var(--bg)}}
 .switch input:focus-visible+.track{{outline:2px solid var(--accent);outline-offset:2px}}
+.swatches{{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}}
+.swatch{{cursor:pointer}}.swatch input{{position:absolute;opacity:0;pointer-events:none}}
+.swatch span{{display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;line-height:1.2;text-align:center;color:var(--dim)}}
+.swatch i{{width:44px;height:44px;border-radius:50%;background:var(--c);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--line)}}
+.swatch input:checked+span{{color:var(--fg)}}.swatch input:checked+span i{{box-shadow:0 0 0 2px var(--fg)}}
+.segmented .dot{{width:14px;height:14px;border-radius:50%;background:var(--c);box-shadow:0 0 0 1px var(--soft);margin-right:8px;display:inline-block}}
+.swatch input:focus-visible+span i{{outline:2px solid var(--fg);outline-offset:4px}}
 </style></head><body>
 <header><div class="wordmark">Flight<span>Clock</span></div><span class="eyebrow">{title}</span></header>
 {body}
@@ -699,6 +771,57 @@ mod tests {
         assert!(cfg.show_date);
         assert_eq!(cfg.update_channel, "beta");
         assert!(cfg.auto_update);
+    }
+
+    #[test]
+    fn applies_accent_colour() {
+        let mut f = valid();
+        f.push(("accent".into(), "lilac".into()));
+        let cfg = apply_form(&Config::default(), &f).unwrap();
+        assert_eq!(cfg.accent, "lilac");
+        assert_eq!(cfg.accent_hex(), "#B9A2FF");
+    }
+
+    #[test]
+    fn missing_accent_keeps_current() {
+        let current = Config { accent: "coral".into(), ..Config::default() };
+        assert_eq!(apply_form(&current, &valid()).unwrap().accent, "coral");
+    }
+
+    #[test]
+    fn rejects_unknown_accent() {
+        let mut f = valid();
+        f.push(("accent".into(), "#000000".into()));
+        assert!(apply_form(&Config::default(), &f).is_err());
+    }
+
+    #[test]
+    fn page_uses_chosen_accent() {
+        let cfg = Config { accent: "lime".into(), ..Config::default() };
+        let html = render_settings(&cfg, None);
+        assert!(html.contains("--accent:#B4E06A"));
+        assert!(!html.contains("--accent:#FF7F6B"));
+        assert!(html.contains(r##"value="lime" data-hex="#B4E06A" checked"##));
+    }
+
+    #[test]
+    fn applies_background() {
+        let mut f = valid();
+        f.push(("background".into(), "black".into()));
+        assert_eq!(apply_form(&Config::default(), &f).unwrap().background, "black");
+        let mut bad = valid();
+        bad.push(("background".into(), "white".into()));
+        assert!(apply_form(&Config::default(), &bad).is_err());
+        let current = Config { background: "black".into(), ..Config::default() };
+        assert_eq!(apply_form(&current, &valid()).unwrap().background, "black");
+    }
+
+    #[test]
+    fn page_uses_chosen_background() {
+        let cfg = Config { background: "black".into(), ..Config::default() };
+        let html = render_settings(&cfg, None);
+        assert!(html.contains("--bg:#000000"));
+        assert!(html.contains(r##"<meta name="theme-color" content="#000000">"##));
     }
 
     #[test]

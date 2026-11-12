@@ -3,6 +3,13 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
+## [0.2.1] - 2026-11-12
+
+### Fixed
+- The clock could stop answering at `flight-clock.local` (becoming
+  `flight-clock-2.local`) after the WiFi setup hotspot had been opened. It now
+  reclaims its name when it comes back online.
+
 ## [0.2.0] - 2026-11-11
 
 First release with signed updates.

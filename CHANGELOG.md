@@ -3,6 +3,13 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
+## [0.2.3] - 2026-11-12
+
+### Changed
+- Amber is the default accent again, as it was before 0.2.2. Clocks that
+  never picked a colour on the settings page go back to amber. A colour
+  chosen on the settings page is kept.
+
 ## [0.2.2] - 2026-11-12
 
 ### Added

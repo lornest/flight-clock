@@ -800,7 +800,7 @@ mod tests {
         let cfg = Config { accent: "lime".into(), ..Config::default() };
         let html = render_settings(&cfg, None);
         assert!(html.contains("--accent:#B4E06A"));
-        assert!(!html.contains("--accent:#FF7F6B"));
+        assert!(!html.contains("--accent:#FFB547"));
         assert!(html.contains(r##"value="lime" data-hex="#B4E06A" checked"##));
     }
 

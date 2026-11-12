@@ -2,18 +2,21 @@
 
 mod config;
 mod flight;
+mod ipc;
+mod qr;
 mod settings_web;
 mod ui_paths;
 mod update;
 mod utils;
 mod watchdog;
+mod web;
 mod wifi;
 
 use config::{Config, Location};
 use flight::poller::{FlightState, NewFlightWithInfo, PollEvent, Poller};
+use ipc::{FromWeb, ToWeb, WebLink};
 use utils::geo::{calculate_distance, calculate_plane_rotation, direction_to_degrees, polar_to_screen};
-use settings_web::{SettingsEvent, SettingsWeb};
-use wifi::portal::{Portal, PortalState};
+use wifi::portal::PortalState;
 use wifi::supervisor::{Supervisor, WifiCommand, WifiUiState};
 
 use std::collections::{HashMap, VecDeque};
@@ -36,6 +39,18 @@ const ALERT_MAX_BEACONS: usize = 8;
 
 /// Shortest time the startup splash stays up
 const MIN_SPLASH: Duration = Duration::from_secs(4);
+
+/// Width of the QR codes on screen, in pixels (41 modules of 5 px)
+const QR_PX: u32 = 205;
+/// "Pair a phone": how long the QR code stays up if nobody scans it
+const LINK_SHOWN: Duration = Duration::from_secs(3 * 60);
+/// First-run setup: the QR code stays up, but its token is replaced this often
+const LINK_ROTATE: Duration = Duration::from_secs(15 * 60);
+
+/// Night mode "dim": how dark the picture goes (1.0 would be black)
+const NIGHT_DIM: f32 = 0.8;
+/// How long a touch keeps the screen awake during night hours
+const NIGHT_WAKE: Duration = Duration::from_secs(60);
 
 /// Radius of the outer radar range ring, in display pixels
 const DISPLAY_MAX_RADIUS_PX: f64 = 210.0;
@@ -65,10 +80,12 @@ struct AlertState {
     /// Bumped on every new flight so older auto-dismiss timers do nothing.
     generation: u64,
     flights: Vec<NewFlightWithInfo>,
+    /// When the last alert came up, for the minimum gap between alerts.
+    last_started: Option<Instant>,
 }
 
 fn main() {
-    // Subcommands (no UI): `--version`, `update <scheduled|now|check>`
+    // Subcommands (no UI): `--version`, `web`, `update <scheduled|now|check>`
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("--version") | Some("-V") => {
@@ -89,8 +106,15 @@ fn main() {
                 }
             });
         }
+        // The settings page and WiFi portal, as their own unprivileged
+        // process (systemd/flight-clock-web.service)
+        Some("web") => {
+            eprintln!("flight-clock {} web server", update::VERSION);
+            web::run(web_port());
+            std::process::exit(1);
+        }
         Some(other) if other.starts_with('-') || !other.is_empty() => {
-            eprintln!("usage: flight-clock [--version | update <scheduled|now|check>]");
+            eprintln!("usage: flight-clock [--version | web | update <scheduled|now|check>]");
             std::process::exit(2);
         }
         _ => {}
@@ -101,6 +125,11 @@ fn main() {
     // Shared so the web settings page can move the clock without a restart
     let location = Arc::new(Mutex::new(config.location()));
     let facing_direction = Arc::new(Mutex::new(config.facing_direction.clone()));
+    // The settings as last saved, for night mode and the alert filters
+    let prefs = Arc::new(Mutex::new(config.clone()));
+    // Night mode: the screen stays awake until this time after a touch
+    let wake_until = Arc::new(Mutex::new(Instant::now()));
+    set_backlight(true);
     let started_at = Instant::now();
 
     let ui = App::new().unwrap();
@@ -110,6 +139,7 @@ fn main() {
     ui.set_clock_face(normalise_face(&config.clock_face).into());
     ui.set_show_date(config.show_date);
     apply_colours(&ui, &config);
+    ui.set_tour_step(if config.hints_seen { 0 } else { 1 });
 
     // Dev aid: FLIGHT_CLOCK_SCREEN=radar starts on the radar (e.g. for screenshots)
     let start_on_radar = std::env::var("FLIGHT_CLOCK_SCREEN").as_deref() == Ok("radar");
@@ -120,52 +150,131 @@ fn main() {
     let alert = Arc::new(Mutex::new(AlertState::default()));
     let trails = Arc::new(Mutex::new(Trails::new()));
 
-    // --- Web server: WiFi setup portal (hotspot up) or settings page (on the LAN) ---
+    // --- Web server link ---
+    // The settings page and WiFi setup portal run in their own unprivileged
+    // process (`flight-clock web`). It asks this one to do things over a
+    // socket; every request is checked here before it is acted on.
     let network_ready = Arc::new(AtomicBool::new(false));
     let portal_state = Arc::new(Mutex::new(PortalState::default()));
     let (wifi_tx, wifi_rx) = mpsc::channel::<WifiCommand>();
     let http_port = web_port();
-    ui.set_web_address(web_address(http_port).into());
+    let web_address = web_address(http_port);
+    ui.set_web_address(web_address.clone().into());
+    if config.location().is_none() {
+        ui.set_radar_error(format!("Set your location: {}", web_address).into());
+    }
+    let phone_link = PhoneLink { token: Arc::new(Mutex::new(None)), address: web_address.clone() };
 
-    let settings_web = {
+    let web_link = {
         let ui_handle = ui.as_weak();
         let location = location.clone();
         let facing = facing_direction.clone();
-        Arc::new(SettingsWeb::new(move |event| {
-            let ui_handle = ui_handle.clone();
-            let location = location.clone();
-            let facing = facing.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = ui_handle.upgrade() {
-                    apply_settings_event(&ui, event, &location, &facing);
-                }
-            });
-        }))
+        let phone_link = phone_link.clone();
+        let wifi_tx = wifi_tx.clone();
+        let portal_state = portal_state.clone();
+        let prefs = prefs.clone();
+        WebLink::listen(move |request| {
+            let to_ui = |event: WebEvent| {
+                let ui_handle = ui_handle.clone();
+                let location = location.clone();
+                let facing = facing.clone();
+                let phone_link = phone_link.clone();
+                let prefs = prefs.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_handle.upgrade() {
+                        if let WebEvent::Applied(cfg) = &event {
+                            *prefs.lock().unwrap() = cfg.clone();
+                        }
+                        apply_web_event(&ui, event, &location, &facing, &phone_link);
+                    }
+                });
+            };
+            handle_web_request(request, &to_ui, &wifi_tx, &portal_state)
+        })
     };
+    // Keep the web server's copy of the WiFi setup state, and of the token
+    // in the QR code on screen, up to date (and send both again whenever it
+    // reconnects)
     {
-        let portal = Portal::new(portal_state.clone(), wifi_tx.clone(), settings_web.clone(), http_port);
-        std::thread::spawn(move || portal.serve());
+        let web_link = web_link.clone();
+        let portal_state = portal_state.clone();
+        let link_token = phone_link.token.clone();
+        std::thread::spawn(move || {
+            let mut sent = None;
+            let mut sent_link = None;
+            loop {
+                let now = {
+                    let portal = portal_state.lock().unwrap();
+                    (web_link.connection(), portal.active, portal.networks.clone(), portal.message.clone())
+                };
+                if now.0 > 0 && sent.as_ref() != Some(&now) {
+                    let update = ToWeb::Portal { active: now.1, networks: now.2.clone(), message: now.3.clone() };
+                    if web_link.send(&update) {
+                        sent = Some(now);
+                    }
+                }
+                let link_now = (web_link.connection(), link_token.lock().unwrap().clone());
+                if link_now.0 > 0 && sent_link.as_ref() != Some(&link_now) {
+                    if web_link.send(&ToWeb::PairLink { token: link_now.1.clone() }) {
+                        sent_link = Some(link_now);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        });
+    }
+    // On the Pi the web server is its own systemd unit. On a dev machine
+    // (or with FLIGHT_CLOCK_WEB_IN_PROCESS=1) run it here on a thread; it
+    // still goes through the socket, so the same code is exercised.
+    if cfg!(not(target_os = "linux")) || std::env::var_os("FLIGHT_CLOCK_WEB_IN_PROCESS").is_some() {
+        std::thread::spawn(move || web::run(http_port));
     }
     {
-        let settings_web = settings_web.clone();
+        let web_link = web_link.clone();
         let ui_handle = ui.as_weak();
         ui.on_pairing_cancelled(move || {
-            settings_web.cancel_code();
+            web_link.send(&ToWeb::CancelCode);
             if let Some(ui) = ui_handle.upgrade() {
                 ui.set_pairing_code("".into());
             }
         });
     }
 
+    // --- Phone QR code: "Pair a phone" on the settings menu, and dismissing it ---
+    {
+        let ui_handle = ui.as_weak();
+        let phone_link = phone_link.clone();
+        ui.on_pair_phone_requested(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_show_direction_selector(false);
+                phone_link.show(&ui, false);
+            }
+        });
+    }
+    {
+        let ui_handle = ui.as_weak();
+        let phone_link = phone_link.clone();
+        ui.on_link_dismissed(move || {
+            let Some(ui) = ui_handle.upgrade() else { return };
+            // "Later" on first-run setup: don't offer it again
+            if ui.get_link_first_run() {
+                save_setting(|cfg| cfg.setup_dismissed = true);
+            }
+            phone_link.hide(&ui);
+        });
+    }
+
     {
         let ui_handle = ui.as_weak();
         let network_ready = network_ready.clone();
+        let phone_link = phone_link.clone();
         std::thread::spawn(move || {
             let supervisor = Supervisor::new(wifi_rx, portal_state, network_ready, move |state| {
                 let ui_handle = ui_handle.clone();
+                let phone_link = phone_link.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_handle.upgrade() {
-                        apply_wifi_state(&ui, state, started_at);
+                        apply_wifi_state(&ui, state, started_at, &phone_link);
                     }
                 });
             });
@@ -182,16 +291,19 @@ fn main() {
         let trails = trails.clone();
         let network_ready = network_ready.clone();
         let location = location.clone();
+        let prefs = prefs.clone();
 
         std::thread::spawn(move || {
             let poller = Poller::new(location.clone(), poll_interval.clone(), network_ready);
             poller.run(move |event| {
                 let facing = facing.lock().unwrap().clone();
-                let location = *location.lock().unwrap();
+                // The poller only runs with a location set
+                let Some(location) = *location.lock().unwrap() else { return };
                 let ui_handle = ui_handle.clone();
                 let alert = alert.clone();
                 let trails = trails.clone();
                 let poll_interval = poll_interval.clone();
+                let prefs = prefs.lock().unwrap().clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_handle.upgrade() else { return };
                     match event {
@@ -204,7 +316,7 @@ fn main() {
                             ui.set_radar_updating(false);
                             ui.set_radar_error("".into());
                             update_radar(&ui, &state, &facing, location, &trails);
-                            update_alert(&ui, &state, &facing, location, &alert, &poll_interval);
+                            update_alert(&ui, &state, &facing, location, &alert, &poll_interval, &prefs);
                         }
                     }
                 });
@@ -213,13 +325,39 @@ fn main() {
     }
 
     // --- Clock update callback ---
+    // The Pi has no clock of its own: until the time arrives from the network
+    // the faces show none, rather than a confident wrong one.
+    let time_synced = Arc::new(AtomicBool::new(time_is_synced()));
+    if !time_synced.load(Ordering::Relaxed) {
+        eprintln!("Waiting for the time from the network");
+        let time_synced = time_synced.clone();
+        std::thread::spawn(move || {
+            while !time_is_synced() {
+                std::thread::sleep(TIME_SYNC_CHECK_EVERY);
+            }
+            eprintln!("Time set from the network");
+            time_synced.store(true, Ordering::Relaxed);
+        });
+    }
+
     let ui_handle_clock = ui.as_weak();
+    let prefs_clock = prefs.clone();
+    let wake_until_clock = wake_until.clone();
     ui.on_update_clock(move || {
         if let Some(ui) = ui_handle_clock.upgrade() {
             let now = chrono::Local::now();
             let h = chrono::Timelike::hour(&now) as f32;
             let m = chrono::Timelike::minute(&now) as f32;
             let s = chrono::Timelike::second(&now) as f32;
+
+            let time_known = time_synced.load(Ordering::Relaxed);
+            ui.set_time_known(time_known);
+
+            // No night mode on a guess at the time
+            let awake = Instant::now() < *wake_until_clock.lock().unwrap();
+            let in_use = screen_in_use(&ui) || !time_known;
+            let dim = night_dim(&prefs_clock.lock().unwrap(), h as u32 * 60 + m as u32, awake, in_use);
+            set_night_dim(&ui, dim);
 
             ui.set_second_angle(s * 6.0);
             ui.set_minute_angle(m * 6.0 + s * 0.1);
@@ -232,9 +370,44 @@ fn main() {
                 ui.set_second_plane(ui_paths::second_hand_plane(s as f64 * 6.0, SECOND_PLANE_RADIUS).into());
             }
             ui.set_date_text(now.format("%a %d %b").to_string().to_uppercase().into());
-            ui.set_time_text(now.format("%H:%M").to_string().into());
+            ui.set_time_text(if time_known { now.format("%H:%M").to_string() } else { "--:--".to_string() }.into());
         }
     });
+
+    // --- Night mode: a touch wakes the screen for a while ---
+    {
+        let ui_handle = ui.as_weak();
+        let wake_until = wake_until.clone();
+        ui.on_night_woken(move || {
+            *wake_until.lock().unwrap() = Instant::now() + NIGHT_WAKE;
+            if let Some(ui) = ui_handle.upgrade() {
+                set_night_dim(&ui, 0.0);
+            }
+        });
+    }
+
+    // --- Guided tour: SKIP ---
+    {
+        let ui_handle = ui.as_weak();
+        ui.on_tour_skipped(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                end_tour(&ui);
+            }
+        });
+    }
+
+    // --- Swipe between clock and radar ---
+    {
+        let ui_handle = ui.as_weak();
+        let poll_interval = poll_interval.clone();
+        ui.on_screen_swiped(move |screen| {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_current_screen(screen.clamp(0, 1));
+                poll_interval.store(desired_poll_interval(&ui), Ordering::Relaxed);
+                tour_did(&ui, if screen == 1 { TOUR_TO_RADAR } else { TOUR_TO_CLOCK });
+            }
+        });
+    }
 
     // --- Alert dismiss callback ---
     {
@@ -279,12 +452,15 @@ fn main() {
             if let Some(ui) = ui_handle_tap.upgrade() {
                 if dist_from_center <= CENTER_RADIUS {
                     ui.set_show_direction_selector(true);
+                    tour_did(&ui, TOUR_SETTINGS);
                 } else {
                     let current = ui.get_current_screen();
                     if x < 0.0 && current == 1 {
                         ui.set_current_screen(0);
+                        tour_did(&ui, TOUR_TO_CLOCK);
                     } else if x >= 0.0 && current == 0 {
                         ui.set_current_screen(1);
+                        tour_did(&ui, TOUR_TO_RADAR);
                     }
                     poll_interval_tap.store(desired_poll_interval(&ui), Ordering::Relaxed);
                 }
@@ -332,6 +508,7 @@ fn main() {
             ui.set_clock_face(next.into());
             ui.invoke_update_clock();
             save_setting(|cfg| cfg.clock_face = next.to_string());
+            tour_did(&ui, TOUR_FACE);
         });
     }
     {
@@ -406,15 +583,149 @@ fn web_address(port: u16) -> String {
 /// How long a pairing code stays on screen (matches the page's code expiry).
 const PAIRING_CODE_SHOWN: Duration = Duration::from_secs(120);
 
+/// Something the web server asked for, to be applied on the UI thread.
+enum WebEvent {
+    /// Show this pairing code on the screen.
+    ShowCode(String),
+    /// Hide the pairing code (paired, expired or too many attempts).
+    HideCode,
+    /// New settings were saved; apply them.
+    Applied(Config),
+    /// A phone paired with the QR code on screen.
+    LinkUsed,
+}
+
+/// The QR code that opens the settings page on a phone, already paired.
+/// It carries a one-time token made here; the web server is told the token
+/// and pairs whichever phone presents it. Only touched on the UI thread,
+/// apart from the thread that passes the token on.
+#[derive(Clone)]
+struct PhoneLink {
+    /// The token in the code on screen, if one is showing.
+    token: Arc<Mutex<Option<String>>>,
+    /// The settings page address, e.g. "flight-clock.local".
+    address: String,
+}
+
+impl PhoneLink {
+    /// Put a new code on screen. For first-run setup it stays until it is
+    /// used or dismissed, with a fresh token every `LINK_ROTATE`; otherwise
+    /// it comes down by itself after `LINK_SHOWN`.
+    fn show(&self, ui: &App, first_run: bool) {
+        let token = utils::random::string(16, utils::random::READABLE);
+        let url = format!("http://{}/s?k={}", self.address, token);
+        ui.set_link_qr(qr::image(&url, QR_PX));
+        ui.set_link_first_run(first_run);
+        ui.set_link_active(true);
+        *self.token.lock().unwrap() = Some(token.clone());
+
+        let this = self.clone();
+        let ui_handle = ui.as_weak();
+        let lifetime = if first_run { LINK_ROTATE } else { LINK_SHOWN };
+        slint::Timer::single_shot(lifetime, move || {
+            let Some(ui) = ui_handle.upgrade() else { return };
+            // Used, dismissed or replaced since: nothing to do
+            let still_shown = this.token.lock().unwrap().as_deref() == Some(token.as_str());
+            if !still_shown {
+                return;
+            }
+            if first_run {
+                this.show(&ui, true);
+            } else {
+                this.hide(&ui);
+            }
+        });
+    }
+
+    fn hide(&self, ui: &App) {
+        *self.token.lock().unwrap() = None;
+        ui.set_link_active(false);
+        ui.set_link_qr(slint::Image::default());
+    }
+
+    /// First-run setup: once online, offer the code until the clock knows
+    /// where it is (or the owner says "Later").
+    fn offer_setup(&self, ui: &App) {
+        if ui.get_link_active() {
+            return;
+        }
+        let cfg = Config::load(None);
+        if cfg.location().is_none() && !cfg.setup_dismissed {
+            self.show(ui, true);
+        }
+    }
+}
+
+/// Act on a request from the web server process. It is unprivileged and
+/// faces the network, so nothing it sends is trusted: codes, settings and
+/// WiFi details are all checked here. Returns the answer, for requests that
+/// have one.
+fn handle_web_request(
+    request: FromWeb,
+    to_ui: &dyn Fn(WebEvent),
+    wifi: &mpsc::Sender<WifiCommand>,
+    portal: &Mutex<PortalState>,
+) -> Option<ToWeb> {
+    match request {
+        FromWeb::ShowCode { code } => {
+            if code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit()) {
+                to_ui(WebEvent::ShowCode(code));
+            }
+            None
+        }
+        FromWeb::HideCode => {
+            to_ui(WebEvent::HideCode);
+            None
+        }
+        FromWeb::SaveSettings { id, config } => {
+            let saved = config.validate().and_then(|()| config.save(None));
+            if saved.is_ok() {
+                to_ui(WebEvent::Applied(config));
+            }
+            Some(ToWeb::Reply { id, error: saved.err() })
+        }
+        FromWeb::TriggerUpdate { id, install } => {
+            let mode = if install { update::Mode::Now } else { update::Mode::Check };
+            Some(ToWeb::Reply { id, error: update::trigger(mode).err() })
+        }
+        FromWeb::WifiConnect { ssid, password } => {
+            // Only while the setup hotspot is up, and only plausible values
+            // (an SSID is at most 32 bytes, a WPA password at most 63)
+            let plausible = (1..=32).contains(&ssid.len())
+                && password.len() <= 63
+                && !ssid.chars().chain(password.chars()).any(char::is_control);
+            if plausible && portal.lock().unwrap().active {
+                let _ = wifi.send(WifiCommand::Connect { ssid, password });
+            }
+            None
+        }
+        FromWeb::PortalSeen => {
+            let mut portal = portal.lock().unwrap();
+            if portal.active {
+                portal.last_request = Some(Instant::now());
+            }
+            None
+        }
+        FromWeb::LinkUsed => {
+            to_ui(WebEvent::LinkUsed);
+            None
+        }
+    }
+}
+
 /// Apply something the web settings page did.
-fn apply_settings_event(
+fn apply_web_event(
     ui: &App,
-    event: SettingsEvent,
-    location: &Arc<Mutex<Location>>,
+    event: WebEvent,
+    location: &Arc<Mutex<Option<Location>>>,
     facing: &Arc<Mutex<String>>,
+    phone_link: &PhoneLink,
 ) {
     match event {
-        SettingsEvent::ShowCode(code) => {
+        // The phone has what it needs; take the code down. (First-run setup
+        // offers it again at the next start if no location gets saved.)
+        WebEvent::LinkUsed => phone_link.hide(ui),
+        WebEvent::ShowCode(code) => {
             ui.set_show_direction_selector(false);
             // Shown grouped for reading: "482913" -> "482 913"
             let code = if code.len() == 6 { format!("{} {}", &code[..3], &code[3..]) } else { code };
@@ -428,8 +739,16 @@ fn apply_settings_event(
                 }
             });
         }
-        SettingsEvent::HideCode => ui.set_pairing_code("".into()),
-        SettingsEvent::Applied(cfg) => {
+        WebEvent::HideCode => ui.set_pairing_code("".into()),
+        WebEvent::Applied(cfg) => {
+            // A location has arrived: drop the "set your location" note
+            if location.lock().unwrap().is_none() && cfg.location().is_some() {
+                ui.set_radar_error("".into());
+            }
+            // First-run setup is done (or put off) from the phone
+            if ui.get_link_active() && ui.get_link_first_run() && (cfg.location().is_some() || cfg.setup_dismissed) {
+                phone_link.hide(ui);
+            }
             *location.lock().unwrap() = cfg.location();
             *facing.lock().unwrap() = cfg.facing_direction.clone();
             ui.set_facing_direction(cfg.facing_direction.clone().into());
@@ -468,6 +787,141 @@ fn parse_hex_colour(hex: &str) -> Option<slint::Color> {
     Some(slint::Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
+const TIME_SYNC_CHECK_EVERY: Duration = Duration::from_secs(5);
+
+/// Has the system clock been set from the network since boot? Where that
+/// can't be told (not Linux, no timedatectl, or network time switched off on
+/// purpose) the answer is yes, so the clock is never blank for no reason.
+fn time_is_synced() -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+    // systemd-timesyncd leaves this file once it has synchronised
+    if std::path::Path::new("/run/systemd/timesync/synchronized").exists() {
+        return true;
+    }
+    match std::process::Command::new("timedatectl")
+        .args(["show", "-p", "NTP", "-p", "NTPSynchronized"])
+        .output()
+    {
+        Ok(out) if out.status.success() => synced_per_timedatectl(&String::from_utf8_lossy(&out.stdout)),
+        _ => true,
+    }
+}
+
+/// Reads `timedatectl show -p NTP -p NTPSynchronized`. Unsynced only when
+/// network time is on and hasn't arrived yet.
+fn synced_per_timedatectl(output: &str) -> bool {
+    let value = |key: &str| output.lines().find_map(|l| l.trim().strip_prefix(key)).map(str::trim);
+    !(value("NTP=") == Some("yes") && value("NTPSynchronized=") == Some("no"))
+}
+
+// Guided tour steps (the UI's `tour-step`): each is the gesture being asked for.
+const TOUR_TO_RADAR: i32 = 1;
+const TOUR_TO_CLOCK: i32 = 2;
+const TOUR_SETTINGS: i32 = 3;
+const TOUR_FACE: i32 = 4;
+const TOUR_DONE: i32 = 5;
+/// How long "That's it" stays up after the last step
+const TOUR_DONE_SHOWN: Duration = Duration::from_secs(4);
+
+/// The owner just made this gesture. If it's the one the tour is asking for,
+/// move on; after the last, say so briefly and don't show the tour again.
+fn tour_did(ui: &App, step: i32) {
+    if ui.get_tour_step() != step {
+        return;
+    }
+    ui.set_tour_step(step + 1);
+    if step + 1 == TOUR_DONE {
+        save_setting(|cfg| cfg.hints_seen = true);
+        let ui_handle = ui.as_weak();
+        slint::Timer::single_shot(TOUR_DONE_SHOWN, move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_tour_step(0);
+            }
+        });
+    }
+}
+
+/// SKIP: the tour goes away for good.
+fn end_tour(ui: &App) {
+    ui.set_tour_step(0);
+    save_setting(|cfg| cfg.hints_seen = true);
+}
+
+/// Something is on screen that shouldn't be dimmed or switched off under
+/// whoever is using it: setup, a pairing or QR code, the settings menu, or an
+/// alert (which only comes up at night if alerts are allowed then).
+fn screen_in_use(ui: &App) -> bool {
+    ui.get_starting_up()
+        || ui.get_wifi_setup_mode()
+        || ui.get_show_direction_selector()
+        || ui.get_link_active()
+        || ui.get_alert_active()
+        || !ui.get_pairing_code().is_empty()
+}
+
+/// How dark night mode makes the picture right now: 0 for not at all, 1 for
+/// black (and the backlight off).
+fn night_dim(cfg: &Config, minute_of_day: u32, awake: bool, in_use: bool) -> f32 {
+    if awake || in_use || !cfg.is_night(minute_of_day) {
+        0.0
+    } else if cfg.night_mode == "screen_off" {
+        1.0
+    } else {
+        NIGHT_DIM
+    }
+}
+
+fn set_night_dim(ui: &App, dim: f32) {
+    if ui.get_night_dim() == dim {
+        return;
+    }
+    ui.set_night_dim(dim);
+    set_backlight(dim < 1.0);
+}
+
+/// Switch the display's backlight. The HyperPixel's is on/off only, which is
+/// why "dim" darkens the picture instead. Does nothing where there is no
+/// backlight to control (a dev machine).
+fn set_backlight(on: bool) {
+    let Ok(entries) = std::fs::read_dir("/sys/class/backlight") else { return };
+    for entry in entries.flatten() {
+        let path = entry.path().join("brightness");
+        let max = std::fs::read_to_string(entry.path().join("max_brightness")).unwrap_or_default();
+        let value = if on { max.trim() } else { "0" };
+        if value.is_empty() {
+            continue;
+        }
+        if let Err(e) = std::fs::write(&path, value) {
+            eprintln!("Couldn't switch the backlight ({}): {}", path.display(), e);
+        }
+    }
+}
+
+/// The new flights worth an alert under the owner's settings: none with
+/// alerts off, or at night unless allowed then; otherwise those at or below
+/// the altitude limit (an aircraft with no altitude, i.e. on the ground,
+/// counts as low).
+fn flights_to_alert<'a>(cfg: &Config, state: &'a FlightState, night: bool) -> Vec<&'a NewFlightWithInfo> {
+    if !cfg.alerts_enabled || (night && !cfg.night_alerts) {
+        return Vec::new();
+    }
+    state
+        .new_flights_with_info
+        .iter()
+        .filter(|new| match cfg.alert_max_altitude_ft {
+            None => true,
+            Some(max) => state
+                .flights
+                .iter()
+                .find(|f| f.hex == new.hex)
+                .and_then(|f| f.alt_baro)
+                .is_none_or(|alt| alt <= max as i32),
+        })
+        .collect()
+}
+
 /// Load the config, change one setting, write it back.
 fn save_setting(change: impl FnOnce(&mut Config)) {
     let mut cfg = Config::load(None);
@@ -494,7 +948,7 @@ fn desired_poll_interval(ui: &App) -> u64 {
 }
 
 /// Reflect the WiFi supervisor's state on screen.
-fn apply_wifi_state(ui: &App, state: WifiUiState, started_at: Instant) {
+fn apply_wifi_state(ui: &App, state: WifiUiState, started_at: Instant, phone_link: &PhoneLink) {
     match state {
         WifiUiState::Connecting(message) => {
             ui.set_startup_status(message.clone().into());
@@ -502,17 +956,22 @@ fn apply_wifi_state(ui: &App, state: WifiUiState, started_at: Instant) {
             ui.set_wifi_status(message.into());
             ui.set_wifi_status_error(false);
             ui.set_wifi_can_cancel(false);
+            set_hotspot_password(ui, "");
         }
         WifiUiState::Online { ssid } => {
             ui.set_wifi_setup_mode(false);
             ui.set_wifi_network(ssid.into());
+            set_hotspot_password(ui, "");
             finish_startup(ui, started_at);
+            phone_link.offer_setup(ui);
         }
         WifiUiState::Setup {
             status,
             is_error,
             can_cancel,
+            password,
         } => {
+            set_hotspot_password(ui, &password);
             ui.set_wifi_setup_mode(true);
             ui.set_wifi_status(status.into());
             ui.set_wifi_status_error(is_error);
@@ -521,6 +980,20 @@ fn apply_wifi_state(ui: &App, state: WifiUiState, started_at: Instant) {
             finish_startup(ui, started_at);
         }
     }
+}
+
+/// Show the setup network's password and the QR code that joins it, or
+/// clear both when it isn't up.
+fn set_hotspot_password(ui: &App, password: &str) {
+    if ui.get_wifi_password() == password {
+        return;
+    }
+    ui.set_wifi_password(password.into());
+    ui.set_wifi_qr(if password.is_empty() {
+        slint::Image::default()
+    } else {
+        qr::image(&qr::wifi_text(wifi::manager::AP_SSID, password), QR_PX)
+    });
 }
 
 /// Drop the splash, but not before it's been up for MIN_SPLASH.
@@ -690,14 +1163,23 @@ fn update_alert(
     loc: Location,
     alert: &Arc<Mutex<AlertState>>,
     poll_interval: &Arc<AtomicU64>,
+    prefs: &Config,
 ) {
-    if state.has_new_flights {
+    let now = chrono::Local::now();
+    let minute_of_day = chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now);
+    let wanted = flights_to_alert(prefs, state, prefs.is_night(minute_of_day));
+    // An alert already up takes new flights; a new one waits out the gap
+    let gap = Duration::from_secs(prefs.alert_min_gap_min as u64 * 60);
+    let gap_over = ui.get_alert_active() || alert.lock().unwrap().last_started.is_none_or(|t| t.elapsed() >= gap);
+
+    if !wanted.is_empty() && gap_over {
         let generation = {
             let mut a = alert.lock().unwrap();
             if !ui.get_alert_active() {
                 a.flights.clear();
+                a.last_started = Some(Instant::now());
             }
-            for nf in &state.new_flights_with_info {
+            for nf in wanted {
                 if !a.flights.iter().any(|f| f.hex == nf.hex) {
                     a.flights.push(nf.clone());
                 }
@@ -778,4 +1260,81 @@ fn end_alert(ui: &App, alert: &Arc<Mutex<AlertState>>, poll_interval: &Arc<Atomi
     ui.set_alert_active(false);
     ui.set_alert_more_count(0);
     poll_interval.store(desired_poll_interval(ui), Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flight::types::SlimFlight;
+
+    fn flight(hex: &str, alt: Option<i32>) -> SlimFlight {
+        SlimFlight {
+            hex: hex.into(),
+            callsign: hex.to_uppercase(),
+            lat: 0.0,
+            lon: 0.0,
+            alt_baro: alt,
+            gs: None,
+            track: None,
+            baro_rate: None,
+            aircraft_type: None,
+        }
+    }
+
+    /// Three new flights: high, low, and on the ground (no altitude).
+    fn state() -> FlightState {
+        let flights = vec![flight("high", Some(35000)), flight("low", Some(2500)), flight("ground", None)];
+        let new: Vec<NewFlightWithInfo> = flights.iter().map(|f| NewFlightWithInfo::from_parts(&f.hex, f, None)).collect();
+        FlightState {
+            new_flights: flights.iter().map(|f| f.hex.clone()).collect(),
+            new_flights_with_info: new,
+            flight_count: flights.len(),
+            has_new_flights: true,
+            flights,
+        }
+    }
+
+    fn alerted(cfg: &Config, night: bool) -> Vec<String> {
+        flights_to_alert(cfg, &state(), night).iter().map(|f| f.hex.clone()).collect()
+    }
+
+    #[test]
+    fn alerts_follow_the_filters() {
+        assert_eq!(alerted(&Config::default(), false), ["high", "low", "ground"]);
+        assert!(alerted(&Config { alerts_enabled: false, ..Config::default() }, false).is_empty());
+
+        let low_only = Config { alert_max_altitude_ft: Some(5000), ..Config::default() };
+        assert_eq!(alerted(&low_only, false), ["low", "ground"]);
+    }
+
+    #[test]
+    fn nights_are_quiet_unless_allowed() {
+        assert!(alerted(&Config::default(), true).is_empty());
+        let allowed = Config { night_alerts: true, alert_max_altitude_ft: Some(5000), ..Config::default() };
+        assert_eq!(alerted(&allowed, true), ["low", "ground"]);
+    }
+
+    #[test]
+    fn time_counts_as_unsynced_only_when_network_time_is_pending() {
+        assert!(!synced_per_timedatectl("NTP=yes\nNTPSynchronized=no\n"));
+        assert!(synced_per_timedatectl("NTP=yes\nNTPSynchronized=yes\n"));
+        // Network time switched off: the owner sets the time some other way
+        assert!(synced_per_timedatectl("NTP=no\nNTPSynchronized=no\n"));
+        assert!(synced_per_timedatectl(""));
+    }
+
+    #[test]
+    fn night_dims_only_an_idle_screen_in_night_hours() {
+        let dim = Config { night_mode: "dim".into(), ..Config::default() }; // 22:00-07:00
+        let off = Config { night_mode: "screen_off".into(), ..Config::default() };
+        let (night, day) = (23 * 60, 12 * 60);
+
+        assert_eq!(night_dim(&dim, night, false, false), NIGHT_DIM);
+        assert_eq!(night_dim(&off, night, false, false), 1.0);
+        assert_eq!(night_dim(&dim, day, false, false), 0.0);
+        // Touched recently, or something on screen that's being used
+        assert_eq!(night_dim(&off, night, true, false), 0.0);
+        assert_eq!(night_dim(&off, night, false, true), 0.0);
+        assert_eq!(night_dim(&Config::default(), night, false, false), 0.0);
+    }
 }

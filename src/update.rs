@@ -14,11 +14,15 @@
 //!   /var/lib/flight-clock/      status, applied migrations, failed versions
 //!
 //! Safety:
-//! - Releases must be signed with the key in keys/release.pub (minisign). The
-//!   signed trusted comment must be exactly "flight-clock <version> aarch64",
+//! - Releases must be signed with one of the keys in keys/ (minisign):
+//!   release.pub normally, release-backup.pub if that key is lost or leaked.
+//!   The signed trusted comment must be exactly "flight-clock <version> aarch64",
 //!   so a validly signed but different file can't be substituted.
 //! - After switching, the clock must stay up for HEALTH_WAIT without a
 //!   restart, or the previous version is restored and the new one marked bad.
+//!   HEALTH_WAIT is longer than the unit's WatchdogSec, so a build that
+//!   starts and then hangs is restarted by the watchdog inside the wait and
+//!   counted as bad. The web server must be running at the end of it too.
 
 use crate::config::Config;
 use serde::{Deserialize, Serialize};
@@ -31,12 +35,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub const REPO: &str = "lornest/flight-clock";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const ARCH: &str = "aarch64";
-const PUBLIC_KEY: &str = include_str!("../keys/release.pub");
+/// A release is accepted if any one of these signed it. The backup key's
+/// secret half is kept offline, apart from the main key: it can sign a release
+/// if the main key is lost, or one that replaces the main key if it leaks.
+const PUBLIC_KEYS: &[&str] = &[
+    include_str!("../keys/release.pub"),
+    include_str!("../keys/release-backup.pub"),
+];
 const SERVICE: &str = "flight-clock";
+const WEB_SERVICE: &str = "flight-clock-web";
 
 const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
 const HEALTH_SETTLE: Duration = Duration::from_secs(15);
-const HEALTH_WAIT: Duration = Duration::from_secs(90);
+/// Must exceed WatchdogSec in systemd/flight-clock.service (a test checks):
+/// a hung build only shows up as a restart once the watchdog has fired.
+const HEALTH_WAIT: Duration = Duration::from_secs(150);
+/// How long the web server gets to come back if it's mid-restart when checked
+const WEB_RETRY_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -264,9 +279,21 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// Check the tarball against the release key and the expected trusted comment.
+/// Check the tarball against the release keys and the expected trusted comment.
 fn verify(tarball: &[u8], signature_text: &str, version: &Version) -> Result<(), String> {
-    verify_with(PUBLIC_KEY, tarball, signature_text, version)
+    verify_with_any(PUBLIC_KEYS, tarball, signature_text, version)
+}
+
+/// Ok if any one of the keys accepts it; otherwise the first key's error.
+fn verify_with_any(keys: &[&str], tarball: &[u8], signature_text: &str, version: &Version) -> Result<(), String> {
+    let mut first_error = None;
+    for key in keys {
+        match verify_with(key, tarball, signature_text, version) {
+            Ok(()) => return Ok(()),
+            Err(e) => first_error = first_error.or(Some(e)),
+        }
+    }
+    Err(first_error.unwrap_or_else(|| "no release keys".into()))
 }
 
 fn verify_with(public_key: &str, tarball: &[u8], signature_text: &str, version: &Version) -> Result<(), String> {
@@ -406,7 +433,31 @@ fn restart_and_check() -> Result<(), String> {
     if main_pid() != Some(pid) {
         return Err("restarted on its own".into());
     }
+    // The settings page is part of the release too. Only where its unit is
+    // installed and enabled (it restarts with the clock, see the unit file).
+    if is_enabled(WEB_SERVICE) && !is_active(WEB_SERVICE) {
+        std::thread::sleep(WEB_RETRY_WAIT);
+        if !is_active(WEB_SERVICE) {
+            return Err("the settings page isn't running".into());
+        }
+    }
     Ok(())
+}
+
+fn is_active(service: &str) -> bool {
+    Command::new("systemctl")
+        .args(["is-active", "--quiet", service])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn is_enabled(service: &str) -> bool {
+    Command::new("systemctl")
+        .args(["is-enabled", "--quiet", service])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn main_pid() -> Option<u32> {
@@ -499,7 +550,10 @@ pub struct Version {
 impl Version {
     pub fn parse(s: &str) -> Option<Self> {
         let (core, pre) = match s.split_once('-') {
-            Some((c, p)) if !p.is_empty() => (c, Some(p.to_string())),
+            // The version becomes a file and folder name, so the pre-release
+            // part is limited to semver's characters, with no empty or
+            // dot-only pieces (no "..", no "/").
+            Some((c, p)) if is_pre_release(p) => (c, Some(p.to_string())),
             Some(_) => return None,
             None => (s, None),
         };
@@ -512,6 +566,13 @@ impl Version {
         };
         parts.next().is_none().then_some(v)
     }
+}
+
+fn is_pre_release(pre: &str) -> bool {
+    pre.len() <= 32
+        && pre.split('.').all(|part| {
+            !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
 }
 
 impl std::fmt::Display for Version {
@@ -588,13 +649,62 @@ mod tests {
     }
 
     #[test]
+    fn pre_release_is_limited_to_safe_characters() {
+        assert_eq!(v("0.3.0-beta.1").to_string(), "0.3.0-beta.1");
+        assert_eq!(v("0.3.0-rc-2").to_string(), "0.3.0-rc-2");
+        for bad in ["1.0.0-", "1.0.0-../../etc", "1.0.0-a/b", "1.0.0-a..b", "1.0.0-.", "1.0.0-a b", "1.0.0-a\nb", "1.0.0-é"] {
+            assert!(Version::parse(bad).is_none(), "{:?}", bad);
+        }
+    }
+
+    #[test]
+    fn health_wait_outlasts_the_watchdog() {
+        let unit = include_str!("../systemd/flight-clock.service");
+        let watchdog: u64 = unit
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("WatchdogSec="))
+            .expect("the unit sets WatchdogSec")
+            .trim()
+            .parse()
+            .expect("WatchdogSec in plain seconds");
+        // Watchdog fires, systemd restarts the service: allow 20 s for that to show
+        assert!(HEALTH_WAIT.as_secs() >= watchdog + 20, "{} vs {}", HEALTH_WAIT.as_secs(), watchdog);
+        assert!(HEALTH_WAIT > HEALTH_SETTLE);
+    }
+
+    #[test]
     fn own_version_parses() {
         assert!(Version::parse(VERSION).is_some());
     }
 
     #[test]
-    fn public_key_parses() {
-        assert!(minisign_verify::PublicKey::decode(PUBLIC_KEY.trim()).is_ok());
+    fn public_keys_parse_and_differ() {
+        for key in PUBLIC_KEYS {
+            assert!(minisign_verify::PublicKey::decode(key.trim()).is_ok());
+        }
+        assert_eq!(PUBLIC_KEYS.len(), 2);
+        assert_ne!(PUBLIC_KEYS[0].lines().last(), PUBLIC_KEYS[1].lines().last());
+    }
+
+    #[test]
+    fn installer_trusts_the_same_keys() {
+        // scripts/get.sh carries its own copy of the keys
+        let get_sh = include_str!("../scripts/get.sh");
+        for key in PUBLIC_KEYS {
+            let line = key.lines().last().unwrap().trim();
+            assert!(get_sh.contains(line), "scripts/get.sh is missing key {}", line);
+        }
+    }
+
+    #[test]
+    fn any_listed_key_is_enough() {
+        let real = PUBLIC_KEYS[0];
+        assert!(verify_with_any(&[real, TEST_KEY], TEST_PAYLOAD, TEST_SIG, &v("9.9.9")).is_ok());
+        assert!(verify_with_any(&[TEST_KEY, real], TEST_PAYLOAD, TEST_SIG, &v("9.9.9")).is_ok());
+        assert!(verify_with_any(&[real], TEST_PAYLOAD, TEST_SIG, &v("9.9.9")).is_err());
+        assert!(verify_with_any(&[], TEST_PAYLOAD, TEST_SIG, &v("9.9.9")).is_err());
+        // Right key, wrong version: still refused
+        assert!(verify_with_any(&[real, TEST_KEY], TEST_PAYLOAD, TEST_SIG, &v("9.9.8")).is_err());
     }
 
     fn gh(tag: &str, prerelease: bool, draft: bool, with_sig: bool) -> GhRelease {

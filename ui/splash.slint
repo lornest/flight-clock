@@ -13,16 +13,16 @@ export component Splash inherits Rectangle {
 
     // Scope rings and crosshair
     Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
-    Ring { r: 200px; border-color: #1C2633; }
-    Ring { r: 140px; border-color: #1C2633; }
-    Ring { r: 80px; border-color: #1C2633; }
-    Line { x1: 240; y1: 40; x2: 240; y2: 440; stroke: #1C2633; stroke-width: 1px; }
-    Line { x1: 40; y1: 240; x2: 440; y2: 240; stroke: #1C2633; stroke-width: 1px; }
+    Ring { r: 200px; border-color: Theme.grid-faint; }
+    Ring { r: 140px; border-color: Theme.grid-faint; }
+    Ring { r: 80px; border-color: Theme.grid-faint; }
+    Line { x1: 240; y1: 40; x2: 240; y2: 440; stroke: Theme.grid-faint; stroke-width: 1px; }
+    Line { x1: 40; y1: 240; x2: 440; y2: 240; stroke: Theme.grid-faint; stroke-width: 1px; }
 
     // Hour ticks
     Shape {
         commands: "M240 14L240 28M353 44.3L346 56.4M435.7 127L423.6 134M466 240L452 240M435.7 353L423.6 346M353 435.7L346 423.6M240 466L240 452M127 435.7L134 423.6M44.3 353L56.4 346M14 240L28 240M44.3 127L56.4 134M127 44.3L134 56.4";
-        stroke: #5B6B7E;
+        stroke: Theme.fg-faint;
         stroke-width: 2px;
         stroke-line-cap: round;
     }

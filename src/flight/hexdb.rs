@@ -23,9 +23,20 @@ fn is_success(status: u16) -> bool {
     (200..300).contains(&status)
 }
 
+/// Callsigns and airport codes come from the flight feed and from other
+/// services' replies, and go into request URLs. Only plain codes are looked
+/// up, so nothing in them can change the path or query of the request.
+fn is_plain_code(code: &str) -> bool {
+    (1..=8).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
 /// Fetch flight route from HexDB by ICAO callsign.
 fn fetch_flight_route(flight_number: &str) -> Option<FlightRoute> {
-    let url = format!("{}/route/icao/{}", HEXDB_BASE_URL, flight_number.trim());
+    let callsign = flight_number.trim();
+    if !is_plain_code(callsign) {
+        return None;
+    }
+    let url = format!("{}/route/icao/{}", HEXDB_BASE_URL, callsign);
 
     let response = super::http().get(&url).call().ok()?;
     if !is_success(response.status()) {
@@ -36,7 +47,11 @@ fn fetch_flight_route(flight_number: &str) -> Option<FlightRoute> {
 
 /// Fetch airport info from HexDB by ICAO code.
 fn fetch_airport_info(icao_code: &str) -> Option<Airport> {
-    let url = format!("{}/airport/icao/{}", HEXDB_BASE_URL, icao_code.trim());
+    let icao = icao_code.trim();
+    if !is_plain_code(icao) {
+        return None;
+    }
+    let url = format!("{}/airport/icao/{}", HEXDB_BASE_URL, icao);
 
     let response = super::http().get(&url).call().ok()?;
     if !is_success(response.status()) {
@@ -64,6 +79,9 @@ fn convert_adsb_lol_airport(a: &AdsbLolAirport) -> Airport {
 /// Returns location (city) and name (full airport name) that HexDB doesn't provide.
 fn fetch_adsb_lol_airport(icao_code: &str) -> Option<Airport> {
     let icao = icao_code.trim().to_uppercase();
+    if !is_plain_code(&icao) {
+        return None;
+    }
     if let Some(cached) = airport_cache().lock().unwrap().get(&icao) {
         return Some(cached.clone());
     }
@@ -137,7 +155,7 @@ fn fetch_route_from_adsb_lol(callsign: &str) -> Option<FlightInfo> {
 /// Tries HexDB first, falls back to adsb.lol.
 pub fn get_flight_info(flight_number: &str) -> Option<FlightInfo> {
     let clean = flight_number.trim();
-    if clean.is_empty() {
+    if !is_plain_code(clean) {
         return None;
     }
 
@@ -181,6 +199,21 @@ pub fn get_flight_info(flight_number: &str) -> Option<FlightInfo> {
                 destination: None,
                 route: None,
             })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_plain_code;
+
+    #[test]
+    fn only_plain_codes_are_looked_up() {
+        assert!(is_plain_code("BAW123"));
+        assert!(is_plain_code("EGPH"));
+        assert!(is_plain_code("N123AB"));
+        for bad in ["", "BAW 123", "../x", "A?b=1", "BAW123/..", "A%2F", "TOOLONGCALLSIGN", "É123"] {
+            assert!(!is_plain_code(bad), "{:?}", bad);
         }
     }
 }

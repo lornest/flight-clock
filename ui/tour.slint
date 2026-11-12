@@ -1,0 +1,77 @@
+import { Theme } from "theme.slint";
+
+// Guided tour, the first time the clock runs: one instruction at a time over
+// the real screens. Doing the gesture moves it on (Rust advances `step`).
+// Only the SKIP button takes touches; the rest passes through to the screen.
+export component Tour inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+
+    // 1-4: the gestures; 5: finished (clears by itself)
+    in property <int> step: 1;
+    callback skip();
+
+    property <string> instruction:
+        root.step == 1 ? "Swipe left for the radar"
+        : root.step == 2 ? "Swipe right for the clock"
+        : root.step == 3 ? "Double-tap the middle"
+        : root.step == 4 ? "Hold the logo to change face"
+        : "That's it. Enjoy!";
+
+    Rectangle {
+        x: Theme.clock-center - self.width / 2;
+        y: 306px;
+        width: 330px;
+        height: 70px;
+        border-radius: 35px;
+        border-width: 2px;
+        border-color: Theme.accent;
+        background: Theme.surface;
+
+        Text {
+            y: 10px;
+            width: parent.width;
+            text: root.step <= 4 ? "TRY IT · \{root.step} OF 4" : "TOUR DONE";
+            font-family: Theme.font-mono;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            color: Theme.accent;
+            horizontal-alignment: center;
+        }
+        Text {
+            y: 30px;
+            width: parent.width;
+            text: root.instruction;
+            font-family: Theme.font-display;
+            font-size: 20px;
+            font-weight: 600;
+            color: Theme.fg;
+            horizontal-alignment: center;
+        }
+    }
+
+    if root.step <= 4: Rectangle {
+        x: Theme.clock-center - self.width / 2;
+        y: 384px;
+        width: 120px;
+        height: 44px;
+        border-radius: 22px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: touch.pressed ? Theme.surface : Theme.bg;
+        Text {
+            text: "SKIP";
+            font-family: Theme.font-mono;
+            font-size: 14px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            color: Theme.fg-dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea {
+            clicked => { root.skip(); }
+        }
+    }
+}

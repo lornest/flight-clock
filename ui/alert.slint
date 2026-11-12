@@ -38,6 +38,11 @@ export component Alert inherits Rectangle {
 
     callback dismiss();
 
+    // A tap anywhere dismisses the alert
+    TouchArea {
+        clicked => { root.dismiss(); }
+    }
+
     // Scope (static)
     Ring { r: 236px; border-width: 2px; border-color: Theme.accent-soft; }
     Ring { r: 210px; border-color: Theme.grid; }
@@ -162,7 +167,7 @@ export component Alert inherits Rectangle {
                 if !detail.has-route: Text {
                     text: detail.aircraft-type != "" ? "AIRCRAFT · " + detail.aircraft-type : "ROUTE UNAVAILABLE";
                     font-family: Theme.font-mono;
-                    font-size: 12px;
+                    font-size: 14px;
                     letter-spacing: 1.5px;
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
@@ -173,35 +178,10 @@ export component Alert inherits Rectangle {
         if root.more-count > 0: Text {
             text: "+\{root.more-count} MORE";
             font-family: Theme.font-mono;
-            font-size: 11px;
+            font-size: 14px;
             letter-spacing: 2px;
             color: Theme.fg-dim;
             horizontal-alignment: center;
-        }
-    }
-
-    // Close button (top-right, inside the round display)
-    Rectangle {
-        x: 352px;
-        y: 72px;
-        width: 44px;
-        height: 44px;
-        border-radius: 22px;
-        border-width: 1px;
-        border-color: Theme.line;
-        background: close-touch.pressed ? Theme.surface : Theme.bg;
-
-        Text {
-            text: "×";
-            font-family: Theme.font-display;
-            color: Theme.fg-dim;
-            font-size: Theme.font-xl;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-
-        close-touch := TouchArea {
-            clicked => { root.dismiss(); }
         }
     }
 }

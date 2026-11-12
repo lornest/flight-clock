@@ -58,6 +58,8 @@ pub struct Supervisor<F: Fn(WifiUiState)> {
     portal: Arc<Mutex<PortalState>>,
     network_ready: Arc<AtomicBool>,
     notify: F,
+    /// The setup hotspot has been up since we were last online.
+    hotspot_used: bool,
 }
 
 impl<F: Fn(WifiUiState)> Supervisor<F> {
@@ -73,6 +75,7 @@ impl<F: Fn(WifiUiState)> Supervisor<F> {
             portal,
             network_ready,
             notify,
+            hotspot_used: false,
         }
     }
 
@@ -213,7 +216,9 @@ impl<F: Fn(WifiUiState)> Supervisor<F> {
             portal.active = true;
         }
 
-        let (status, is_error) = match self.wifi.start_ap() {
+        let started = self.wifi.start_ap();
+        self.hotspot_used |= started.is_ok();
+        let (status, is_error) = match started {
             Ok(()) if message.is_empty() => ("Waiting for setup...".to_string(), false),
             Ok(()) => (message.to_string(), is_error),
             Err(e) => {
@@ -232,6 +237,9 @@ impl<F: Fn(WifiUiState)> Supervisor<F> {
             let mut portal = self.portal.lock().unwrap();
             portal.active = false;
             portal.message = None;
+        }
+        if std::mem::take(&mut self.hotspot_used) {
+            reclaim_hostname();
         }
         self.network_ready.store(true, Ordering::Relaxed);
         let ssid = self.wifi.current_ssid().unwrap_or_default();
@@ -262,5 +270,21 @@ impl<F: Fn(WifiUiState)> Supervisor<F> {
                 }
             }
         }
+    }
+}
+
+/// Restart avahi after a hotspot session. When wlan0 drops and comes back,
+/// avahi can mistake its own stale announcement for another device, rename
+/// the clock to `<host>-2.local` and stop answering on the usual name.
+/// A restart makes it announce the real hostname again. `try-restart` does
+/// nothing if avahi isn't running.
+fn reclaim_hostname() {
+    match std::process::Command::new("systemctl")
+        .args(["try-restart", "avahi-daemon.service"])
+        .status()
+    {
+        Ok(s) if s.success() => eprintln!("Restarted avahi to reclaim the .local name"),
+        Ok(s) => eprintln!("avahi restart exited with {}", s),
+        Err(e) => eprintln!("avahi restart failed: {}", e),
     }
 }

@@ -17,6 +17,9 @@ export component Clock inherits Rectangle {
     in property <bool> show-date: true;
     // SVG path of the plane at the tip of the second hand
     in property <string> second-plane: "";
+    // False until the Pi has the time from the network (it has no clock of
+    // its own): no hands rather than the wrong time
+    in property <bool> time-known: true;
 
     // Rings
     Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
@@ -54,7 +57,7 @@ export component Clock inherits Rectangle {
     Wordmark { cx: 240px; cy: 144px; size: 22px; }
 
     // Date panel (design: "amber date"), drawn under the hands
-    if root.show-date: Rectangle {
+    if root.show-date && root.time-known: Rectangle {
         x: 171px;
         y: 313px;
         width: 138px;
@@ -79,7 +82,19 @@ export component Clock inherits Rectangle {
         }
     }
 
+    if !root.time-known: CenteredText {
+        cx: 240px;
+        cy: 276px;
+        text: "SETTING THE TIME";
+        font-family: Theme.font-mono;
+        font-size: 16px;
+        font-weight: 500;
+        letter-spacing: 2px;
+        color: Theme.accent;
+    }
+
     // Hands
+    if root.time-known: Rectangle {
     Needle {
         angle: root.hour-angle;
         length: 120;
@@ -106,6 +121,7 @@ export component Clock inherits Rectangle {
     Shape {
         commands: root.second-plane;
         fill: Theme.accent;
+    }
     }
 
     // Hub

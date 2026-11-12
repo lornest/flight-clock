@@ -7,6 +7,8 @@ import { WifiSetup } from "wifi_setup.slint";
 import { Splash } from "splash.slint";
 import { DigitalClock } from "digital.slint";
 import { PairingCode } from "pairing.slint";
+import { PhoneLink } from "link.slint";
+import { Tour } from "tour.slint";
 
 export { Theme, AlertBeacon, AlertFlightDetail, RadarBeacon, TrailPoint, CompassLabel }
 
@@ -50,6 +52,8 @@ export component App inherits Window {
     in property <string> second-plane: "";
     // "HH:MM" for the radar status pill and the digital face
     in property <string> time-text: "";
+    // False until the system clock has been set from the network
+    in property <bool> time-known: true;
     // Clock face: "analog" or "digital"
     in property <string> clock-face: "analog";
     in property <bool> show-date: true;
@@ -67,6 +71,20 @@ export component App inherits Window {
     in property <bool> wifi-status-error: false;
     in property <bool> wifi-can-cancel: false;
     in property <string> wifi-network: "";
+    // The setup network's password and its join QR code; empty while it's down
+    in property <string> wifi-password: "";
+    in property <image> wifi-qr;
+
+    // QR code that opens the settings page on a phone, already paired:
+    // first-run setup, or "Pair a phone" on the settings menu
+    in property <bool> link-active: false;
+    in property <bool> link-first-run: false;
+    in property <image> link-qr;
+
+    // Night mode: how dark to make the picture (0: not at all, 1: black)
+    in property <float> night-dim: 0;
+    // Guided tour of the gestures: 0 off, 1-4 the step, 5 finished
+    in property <int> tour-step: 0;
 
     // Settings (direction selector + WiFi button)
     in property <bool> show-direction-selector: false;
@@ -87,6 +105,16 @@ export component App inherits Window {
     callback show-date-toggled();
     // Pairing code dismissed on the clock
     callback pairing-cancelled();
+    // Swiped to the clock (0) or the radar (1)
+    callback screen-swiped(int);
+    // The screen was touched while dimmed or off for the night
+    callback night-woken();
+    // SKIP on the guided tour
+    callback tour-skipped();
+    // "Pair a phone" on the settings menu
+    callback pair-phone-requested();
+    // The phone QR code was dismissed (first run: "Later")
+    callback link-dismissed();
 
     // --- 1-second timer for clock updates ---
     Timer {
@@ -106,11 +134,25 @@ export component App inherits Window {
         status-text: root.wifi-status;
         status-is-error: root.wifi-status-error;
         can-cancel: root.wifi-can-cancel;
+        password: root.wifi-password;
+        join-code: root.wifi-qr;
         cancel => { root.wifi-setup-cancelled(); }
     }
 
     // Clock screen
     property <bool> clock-visible: root.main-ui && root.current-screen == 0 && !root.alert-active;
+
+    // Swipe left for the radar, right for the clock. Taps and double-taps
+    // still reach the screens inside.
+    SwipeGestureHandler {
+        width: root.width;
+        height: root.height;
+        enabled: root.main-ui && !root.alert-active && !root.show-direction-selector;
+        handle-swipe-left: root.current-screen == 0;
+        handle-swipe-right: root.current-screen == 1;
+        swiped => {
+            root.screen-swiped(self.current-position.x < self.pressed-position.x ? 1 : 0);
+        }
 
     if root.clock-visible && root.clock-face != "digital": Clock {
         hour-angle: root.hour-angle;
@@ -119,6 +161,7 @@ export component App inherits Window {
         date-text: root.date-text;
         show-date: root.show-date;
         second-plane: root.second-plane;
+        time-known: root.time-known;
     }
 
     if root.clock-visible && root.clock-face == "digital": DigitalClock {
@@ -126,6 +169,7 @@ export component App inherits Window {
         date-text: root.date-text;
         show-date: root.show-date;
         progress-path: root.digital-progress;
+        time-known: root.time-known;
         plane-path: root.digital-plane;
     }
 
@@ -139,6 +183,18 @@ export component App inherits Window {
         updating: root.radar-updating;
         error-text: root.radar-error;
         background-tapped(x, y) => { root.screen-tapped(x, y); }
+    }
+
+    // Global touch handler (for screen navigation via double-tap)
+    // Only active when no modals are shown
+    if root.main-ui && !root.show-direction-selector && !root.alert-active && root.current-screen == 0: TouchArea {
+        clicked => {
+            root.screen-tapped(
+                (self.mouse-x - root.width / 2) / 1px,
+                (self.mouse-y - root.height / 2) / 1px
+            );
+        }
+    }
     }
 
     // Alert overlay (shows over clock when active)
@@ -159,17 +215,7 @@ export component App inherits Window {
         direction-selected(dir) => { root.direction-selected(dir); }
         close => { root.direction-selector-closed(); }
         wifi-settings => { root.wifi-setup-requested(); }
-    }
-
-    // Global touch handler (for screen navigation via double-tap)
-    // Only active when no modals are shown
-    if root.main-ui && !root.show-direction-selector && !root.alert-active && root.current-screen == 0: TouchArea {
-        clicked => {
-            root.screen-tapped(
-                (self.mouse-x - root.width / 2) / 1px,
-                (self.mouse-y - root.height / 2) / 1px
-            );
-        }
+        pair-phone => { root.pair-phone-requested(); }
     }
 
     // Hold the FlightClock logo (~0.7s) to switch clock face. Sits above the
@@ -197,10 +243,39 @@ export component App inherits Window {
         }
     }
 
+    // QR code for a phone (over the clock; under a pairing code)
+    if root.main-ui && root.link-active: PhoneLink {
+        code: root.link-qr;
+        first-run: root.link-first-run;
+        web-address: root.web-address;
+        dismiss => { root.link-dismissed(); }
+    }
+
+    // Guided tour, once (after first-run setup, if that's showing). It sits
+    // over the clock and radar and steps aside for everything else.
+    if root.main-ui && root.tour-step > 0 && !root.link-active && !root.alert-active && !root.show-direction-selector: Tour {
+        step: root.tour-step;
+        skip => { root.tour-skipped(); }
+    }
+
     // Settings page pairing code (over everything except WiFi setup)
     if !root.starting-up && !root.wifi-setup-mode && root.pairing-code != "": PairingCode {
         code: root.pairing-code;
         web-address: root.web-address;
         cancel => { root.pairing-cancelled(); }
+    }
+
+    // Night mode: darken everything. The first touch wakes the screen and
+    // does nothing else.
+    if root.night-dim > 0: Rectangle {
+        background: #000000;
+        opacity: root.night-dim;
+        TouchArea {
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    root.night-woken();
+                }
+            }
+        }
     }
 }

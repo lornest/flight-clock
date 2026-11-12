@@ -1,6 +1,33 @@
 import { Theme } from "theme.slint";
 import { Ring } from "shapes.slint";
 
+// A QR code on a white card (the white border is part of the code).
+export component QrCard inherits Rectangle {
+    in property <image> code;
+    width: 205px;
+    height: 205px;
+    x: Theme.clock-center - self.width / 2;
+    background: white;
+    border-radius: 6px;
+    clip: true;
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.code;
+        image-rendering: pixelated;
+    }
+}
+
+// One centred line of text across the round display.
+component Line inherits Text {
+    x: 0;
+    width: Theme.display-size;
+    horizontal-alignment: center;
+    font-family: Theme.font-mono;
+    font-size: 16px;
+    color: Theme.fg-dim;
+}
+
 export component WifiSetup inherits Rectangle {
     width: Theme.display-size;
     height: Theme.display-size;
@@ -10,98 +37,88 @@ export component WifiSetup inherits Rectangle {
     in property <bool> status-is-error: false;
     in property <bool> can-cancel: false;
     in property <string> ssid: "FlightClock-Setup";
-    in property <string> portal-address: "192.168.4.1";
+    // The setup network's password and the QR code that joins it. Both are
+    // empty while the network isn't up (starting, or trying a network).
+    in property <string> password: "";
+    in property <image> join-code;
 
     callback cancel();
 
+    property <bool> hotspot-up: root.password != "";
+
     Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
-    Ring { r: 200px; border-color: Theme.grid-faint; }
 
-    // Content is kept inside the round display's safe area.
-    VerticalLayout {
-        alignment: center;
-        padding-left: 72px;
-        padding-right: 72px;
-        spacing: 12px;
+    Line {
+        y: root.hotspot-up ? 20px : 150px;
+        text: "WIFI SETUP";
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 3px;
+        color: Theme.accent;
+    }
 
+    // --- Setup network up: scan to join ---
+    if root.hotspot-up: QrCard {
+        y: 42px;
+        code: root.join-code;
+    }
+    if root.hotspot-up: Line {
+        y: 251px;
+        text: "Scan with your camera, or join";
+    }
+    if root.hotspot-up: Line {
+        y: 273px;
+        text: root.ssid;
+        font-size: 18px;
+        font-weight: 500;
+        color: Theme.accent;
+    }
+    if root.hotspot-up: Line {
+        y: 298px;
+        text: "password " + root.password;
+        font-size: 17px;
+        font-weight: 500;
+        color: Theme.fg;
+    }
+
+    // Status: under the password, or on its own while there's no network
+    Text {
+        x: 80px;
+        y: root.hotspot-up ? 322px : 190px;
+        width: 320px;
+        height: root.hotspot-up ? 46px : 100px;
+        text: root.status-text;
+        font-family: root.hotspot-up ? Theme.font-mono : Theme.font-display;
+        font-size: root.hotspot-up ? 16px : Theme.font-lg;
+        font-weight: root.status-is-error || !root.hotspot-up ? 500 : 400;
+        color: root.status-is-error ? Theme.error : (root.hotspot-up ? Theme.fg-faint : Theme.fg);
+        horizontal-alignment: center;
+        vertical-alignment: root.hotspot-up ? top : center;
+        wrap: word-wrap;
+        overflow: elide;
+    }
+
+    if root.can-cancel: Rectangle {
+        x: Theme.clock-center - self.width / 2;
+        y: 372px;
+        width: 210px;
+        height: 48px;
+        border-radius: 24px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: cancel-touch.pressed ? Theme.surface : Theme.bg;
         Text {
-            text: "WIFI SETUP";
+            text: "USE SAVED WIFI";
             font-family: Theme.font-mono;
-            font-size: 11px;
+            font-size: 16px;
             font-weight: 500;
-            letter-spacing: 3px;
-            color: Theme.accent;
+            letter-spacing: 1.5px;
+            color: Theme.fg-soft;
             horizontal-alignment: center;
+            vertical-alignment: center;
         }
-
-        Text {
-            text: "On your phone, join";
-            font-family: Theme.font-display;
-            font-size: Theme.font-lg;
-            font-weight: 500;
-            color: Theme.fg;
-            horizontal-alignment: center;
-        }
-
-        Rectangle {
-            height: 48px;
-            border-radius: 24px;
-            border-width: 1px;
-            border-color: Theme.accent;
-            background: Theme.surface;
-            Text {
-                text: root.ssid;
-                font-family: Theme.font-mono;
-                font-size: Theme.font-lg;
-                font-weight: 500;
-                color: Theme.accent;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-
-        Text {
-            text: "The setup page should open by itself.\nIf not, go to " + root.portal-address;
-            font-family: Theme.font-mono;
-            font-size: 12px;
-            color: Theme.fg-dim;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-
-        Text {
-            text: root.status-text;
-            font-family: Theme.font-mono;
-            font-size: 12px;
-            font-weight: root.status-is-error ? 500 : 400;
-            color: root.status-is-error ? Theme.error : Theme.fg-faint;
-            horizontal-alignment: center;
-            wrap: word-wrap;
-        }
-
-        if root.can-cancel: HorizontalLayout {
-            alignment: center;
-            Rectangle {
-                width: 200px;
-                height: 44px;
-                border-radius: 22px;
-                border-width: 1px;
-                border-color: Theme.line;
-                background: cancel-touch.pressed ? Theme.surface : Theme.bg;
-                Text {
-                    text: "USE SAVED WIFI";
-                    font-family: Theme.font-mono;
-                    font-size: 12px;
-                    font-weight: 500;
-                    letter-spacing: 1.5px;
-                    color: Theme.fg-soft;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                cancel-touch := TouchArea {
-                    clicked => { root.cancel(); }
-                }
-            }
+        cancel-touch := TouchArea {
+            clicked => { root.cancel(); }
         }
     }
 }

@@ -36,7 +36,7 @@ pub enum Backend {
     WpaSupplicant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ScannedNetwork {
     pub ssid: String,
     /// Signal quality, 0-100.
@@ -125,13 +125,17 @@ impl WifiManager {
         networks
     }
 
-    /// Bring up the open "FlightClock-Setup" hotspot at AP_IP, with DNS pointing
-    /// every name at us so phones pop up the captive portal.
-    pub fn start_ap(&mut self) -> Result<(), String> {
+    /// Bring up the "FlightClock-Setup" hotspot (WPA2, with this password) at
+    /// AP_IP, with DNS pointing every name at us so phones pop up the captive
+    /// portal.
+    pub fn start_ap(&mut self, password: &str) -> Result<(), String> {
+        if !valid_wpa_password(password) {
+            return Err("the hotspot password must be 8-63 characters".to_string());
+        }
         eprintln!("Starting setup hotspot {} ({:?})", AP_SSID, self.backend);
         let result = match self.backend {
-            Backend::NetworkManager => nm_start_ap(),
-            Backend::WpaSupplicant => legacy_start_ap(),
+            Backend::NetworkManager => nm_start_ap(password),
+            Backend::WpaSupplicant => legacy_start_ap(password),
         };
         // Even on partial failure some pieces may be up; stop_ap cleans them.
         self.ap_active = true;
@@ -311,7 +315,15 @@ fn nm_scan() -> Vec<ScannedNetwork> {
     .collect()
 }
 
-fn nm_start_ap() -> Result<(), String> {
+/// A fresh password for one setup session, e.g. "abcd-efgh-jkmn": 12 random
+/// characters (about 59 bits), grouped so it can be read off the screen and
+/// typed if the QR code can't be scanned. The dashes are part of it.
+pub fn new_hotspot_password() -> String {
+    use crate::utils::random::{string, READABLE};
+    format!("{}-{}-{}", string(4, READABLE), string(4, READABLE), string(4, READABLE))
+}
+
+fn nm_start_ap(password: &str) -> Result<(), String> {
     // NM's dnsmasq for "shared" connections reads extra config from this dir.
     // Answering every DNS lookup with our IP makes phones show the portal.
     if let Some(dir) = std::path::Path::new(NM_CAPTIVE_DNS_CONF).parent() {
@@ -343,6 +355,15 @@ fn nm_start_ap() -> Result<(), String> {
             "ipv4.method", "shared",
             "ipv4.addresses", &ap_addr,
             "ipv6.method", "disabled",
+            // WPA2 only (AES). Management frame protection off: the Pi's
+            // WiFi chip can't do it as an access point, and some phones
+            // refuse to join when it is merely offered.
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.proto", "rsn",
+            "wifi-sec.pairwise", "ccmp",
+            "wifi-sec.group", "ccmp",
+            "wifi-sec.pmf", "disable",
+            "wifi-sec.psk", password,
         ],
     )?;
     run_ok("nmcli", &["--wait", "30", "connection", "up", "id", NM_AP_CONNECTION])?;
@@ -369,7 +390,19 @@ fn nm_connect(ssid: &str, password: &str) -> Result<(), String> {
     }
     args.extend(["ifname", IFACE]);
 
-    match run_ok("nmcli", &args) {
+    let mut result = run_ok("nmcli", &args);
+    // "nmcli device wifi connect" with a password can fail straight away with
+    // "key-mgmt: property is missing": seen on NetworkManager 1.52 when a
+    // saved profile is already named after the network (so on every re-join),
+    // and it can also happen when the scan lacks the network's security
+    // details. Make the profile ourselves (WPA/WPA2 personal) and bring that
+    // up instead.
+    if !password.is_empty() && result.as_ref().is_err_and(|e| is_missing_key_mgmt(e)) {
+        eprintln!("nmcli couldn't tell the network's security; joining it as WPA2");
+        result = nm_connect_wpa_psk(ssid, password, &existing);
+    }
+
+    match result {
         Ok(_) => {
             // Drop older profiles for the same SSID (e.g. an old password) so
             // NM doesn't try them on the next boot.
@@ -394,6 +427,39 @@ fn nm_connect(ssid: &str, password: &str) -> Result<(), String> {
     }
 }
 
+fn is_missing_key_mgmt(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("key-mgmt") && lower.contains("missing")
+}
+
+/// Join a WPA/WPA2 personal network with a profile made by hand, without
+/// relying on what the scan says about it.
+fn nm_connect_wpa_psk(ssid: &str, password: &str, existing: &[String]) -> Result<String, String> {
+    // Whatever the failed attempt left behind
+    for uuid in nm_profiles_for_ssid(ssid) {
+        if !existing.contains(&uuid) {
+            let _ = run("nmcli", &["connection", "delete", "uuid", &uuid]);
+        }
+    }
+    run_ok(
+        "nmcli",
+        &[
+            "connection", "add",
+            "type", "wifi",
+            "ifname", IFACE,
+            "con-name", ssid,
+            "ssid", ssid,
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.psk", password,
+        ],
+    )?;
+    let uuid = nm_profiles_for_ssid(ssid)
+        .into_iter()
+        .find(|uuid| !existing.contains(uuid))
+        .ok_or_else(|| "couldn't save the network".to_string())?;
+    run_ok("nmcli", &["--wait", "45", "connection", "up", "uuid", &uuid, "ifname", IFACE])
+}
+
 fn friendly_nm_error(raw: &str) -> String {
     let lower = raw.to_lowercase();
     if lower.contains("secrets were required") || lower.contains("no secrets") || lower.contains("802-1x") {
@@ -404,6 +470,8 @@ fn friendly_nm_error(raw: &str) -> String {
         "network not found - is it in range?".to_string()
     } else if lower.contains("timeout") || lower.contains("timed out") {
         "timed out".to_string()
+    } else if is_missing_key_mgmt(raw) {
+        "the clock couldn't read the network's security settings - try again".to_string()
     } else {
         raw.trim_start_matches("Error: ").to_string()
     }
@@ -455,15 +523,16 @@ fn legacy_scan() -> Vec<ScannedNetwork> {
     networks
 }
 
-fn legacy_start_ap() -> Result<(), String> {
+fn legacy_start_ap(password: &str) -> Result<(), String> {
     let _ = run("systemctl", &["stop", "wpa_supplicant"]);
     let _ = run("killall", &["wpa_supplicant"]);
 
-    std::fs::write(
+    // Holds the hotspot password: readable by root only
+    write_private(
         LEGACY_HOSTAPD_CONF,
-        format!(
-            "interface={}\ndriver=nl80211\nssid={}\nhw_mode=g\nchannel=7\nwmm_enabled=0\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0\n",
-            IFACE, AP_SSID
+        &format!(
+            "interface={}\ndriver=nl80211\nssid={}\nhw_mode=g\nchannel=7\nwmm_enabled=0\nmacaddr_acl=0\nauth_algs=1\nignore_broadcast_ssid=0\nwpa=2\nwpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\nwpa_passphrase={}\n",
+            IFACE, AP_SSID, password
         ),
     )
     .map_err(|e| format!("writing hostapd config: {}", e))?;
@@ -489,8 +558,18 @@ fn legacy_start_ap() -> Result<(), String> {
     Ok(())
 }
 
+/// Write a file only root can read, replacing any that's there.
+fn write_private(path: &str, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let _ = std::fs::remove_file(path);
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?;
+    file.write_all(contents.as_bytes())
+}
+
 fn legacy_stop_ap() {
     let _ = run("killall", &["hostapd"]);
+    let _ = std::fs::remove_file(LEGACY_HOSTAPD_CONF);
     if let Ok(pid) = std::fs::read_to_string(LEGACY_DNSMASQ_PID) {
         let _ = run("kill", &[pid.trim()]);
         let _ = std::fs::remove_file(LEGACY_DNSMASQ_PID);
@@ -576,6 +655,14 @@ mod tests {
             "network not found - is it in range?"
         );
     }
+
+    #[test]
+    fn spots_the_missing_key_type_error() {
+        let raw = "Error: 802-11-wireless-security.key-mgmt: property is missing.";
+        assert!(is_missing_key_mgmt(raw));
+        assert!(!is_missing_key_mgmt("Error: Secrets were required, but not provided."));
+        assert!(friendly_nm_error(raw).contains("try again"));
+    }
 }
 
 /// The WiFi and host operations the supervisor needs. `WifiManager` is the
@@ -585,7 +672,7 @@ pub trait Network {
     fn is_connected(&self) -> bool;
     fn current_ssid(&self) -> Option<String>;
     fn scan_networks(&self) -> Vec<ScannedNetwork>;
-    fn start_ap(&mut self) -> Result<(), String>;
+    fn start_ap(&mut self, password: &str) -> Result<(), String>;
     fn stop_ap(&mut self);
     fn connect(&mut self, ssid: &str, password: &str) -> Result<(), String>;
     fn reconnect_saved(&mut self, timeout: Duration) -> bool;
@@ -607,8 +694,8 @@ impl Network for WifiManager {
     fn scan_networks(&self) -> Vec<ScannedNetwork> {
         WifiManager::scan_networks(self)
     }
-    fn start_ap(&mut self) -> Result<(), String> {
-        WifiManager::start_ap(self)
+    fn start_ap(&mut self, password: &str) -> Result<(), String> {
+        WifiManager::start_ap(self, password)
     }
     fn stop_ap(&mut self) {
         WifiManager::stop_ap(self)

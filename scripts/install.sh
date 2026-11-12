@@ -18,6 +18,8 @@ INSTALL_DIR="/opt/flight-clock"
 CONFIG_DIR="/etc/flight-clock"
 STATE_DIR="/var/lib/flight-clock"
 SERVICE_NAME="flight-clock"
+# The settings page / WiFi portal run as this unprivileged user
+WEB_USER="flight-clock-web"
 NONINTERACTIVE="${FLIGHT_CLOCK_NONINTERACTIVE:-0}"
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,7 +86,18 @@ systemctl disable --now dnsmasq 2>/dev/null || true
 # --- Step 3: Directories ---
 echo "[3/8] Creating directories..."
 mkdir -p "$INSTALL_DIR/releases" "$CONFIG_DIR" "$STATE_DIR"
-chmod 700 "$STATE_DIR"
+# Readable by the web server's user (it shows the update status); no secrets here
+chmod 755 "$STATE_DIR"
+if ! id -u "$WEB_USER" >/dev/null 2>&1; then
+    useradd --system --user-group --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin "$WEB_USER"
+fi
+# Clocks installed before the web server had its own user: keep phones paired
+# by copying their sessions to where it now keeps them
+if [ -f "$CONFIG_DIR/web-sessions.json" ] && [ ! -f /var/lib/flight-clock-web/web-sessions.json ]; then
+    install -d -m700 -o "$WEB_USER" -g "$WEB_USER" /var/lib/flight-clock-web
+    install -m600 -o "$WEB_USER" -g "$WEB_USER" "$CONFIG_DIR/web-sessions.json" /var/lib/flight-clock-web/web-sessions.json
+fi
 
 # --- Step 4: Install this release ---
 echo "[4/8] Installing release $VERSION..."
@@ -132,10 +145,9 @@ fi
 # --- Step 5: Config ---
 echo "[5/8] Setting up config..."
 if [ ! -f "$CONFIG_DIR/config.json" ]; then
+    # No location: the clock shows no flights until one is set on the settings page
     cat > "$CONFIG_DIR/config.json" << 'EOF'
 {
-    "latitude": 55.979636,
-    "longitude": -3.577456,
     "radius_nm": 6.0,
     "facing_direction": "N"
 }
@@ -149,7 +161,7 @@ fi
 
 # --- Step 6: systemd units ---
 echo "[6/8] Installing systemd units..."
-for unit in flight-clock.service flight-clock-update@.service flight-clock-update.timer; do
+for unit in flight-clock.service flight-clock-web.service flight-clock-update@.service flight-clock-update.timer; do
     if [ -f "$RELEASE_DIR/systemd/$unit" ]; then
         install -m644 "$RELEASE_DIR/systemd/$unit" "/etc/systemd/system/$unit"
     else
@@ -158,6 +170,8 @@ for unit in flight-clock.service flight-clock-update@.service flight-clock-updat
 done
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+# Started and stopped together with the clock (see the unit file)
+systemctl enable flight-clock-web.service >/dev/null 2>&1
 systemctl enable --now flight-clock-update.timer >/dev/null 2>&1 || true
 
 # --- Step 7: System settings ---
@@ -195,7 +209,7 @@ echo "============================================"
 echo ""
 echo "  Settings:  http://$HOST.local  (pair your phone with the code on the clock)"
 echo "  Updates:   daily, automatic (change on the settings page)"
-echo "  Logs:      sudo journalctl -u $SERVICE_NAME -f"
+echo "  Logs:      sudo journalctl -u $SERVICE_NAME -u flight-clock-web -f"
 echo ""
 echo "  Display: for a HyperPixel 2.1 Round, also run (once):"
 echo "    sudo $RELEASE_DIR/setup-hyperpixel2r.sh && sudo reboot"

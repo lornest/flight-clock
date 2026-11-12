@@ -5,11 +5,13 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/lornest/flight-clock/main/scripts/get.sh | sudo bash
 #
 # Downloads the latest release, checks its signature against the FlightClock
-# release key, and installs it. Set CHANNEL=beta for pre-releases, or
+# release keys, and installs it. Set CHANNEL=beta for pre-releases, or
 # HYPERPIXEL=0 to skip the HyperPixel 2.1 Round display setup.
 
 REPO="lornest/flight-clock"
-PUBKEY="RWR2EfaRD2IfiYFaY5C5CBMe4EzVP42dKcLlnI2NM1REP5zxHemgsVfn"
+# keys/release.pub and keys/release-backup.pub; either may sign a release
+PUBKEYS="RWR2EfaRD2IfiYFaY5C5CBMe4EzVP42dKcLlnI2NM1REP5zxHemgsVfn
+RWT0uACmc8JMnclr1ALhzKWopfYRCkPhAi6PUNNj0IYzyAExpxgijqVG"
 CHANNEL="${CHANNEL:-stable}"
 HYPERPIXEL="${HYPERPIXEL:-1}"
 
@@ -60,7 +62,17 @@ curl -fsSL -o "$WORK/$NAME.tar.gz" "$TARBALL_URL"
 curl -fsSL -o "$WORK/$NAME.tar.gz.minisig" "$SIG_URL"
 
 echo "Checking signature..."
-OUT=$(minisign -V -P "$PUBKEY" -m "$WORK/$NAME.tar.gz" -x "$WORK/$NAME.tar.gz.minisig")
+OUT=""
+for PUBKEY in $PUBKEYS; do
+    if OUT=$(minisign -V -P "$PUBKEY" -m "$WORK/$NAME.tar.gz" -x "$WORK/$NAME.tar.gz.minisig" 2>/dev/null); then
+        break
+    fi
+    OUT=""
+done
+if [ -z "$OUT" ]; then
+    echo "Signature check failed. Not installing."
+    exit 1
+fi
 if ! grep -qxF "Trusted comment: flight-clock $VERSION aarch64" <<< "$OUT"; then
     echo "Signature is valid but for a different file. Not installing."
     exit 1

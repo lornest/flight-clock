@@ -82,7 +82,8 @@ component RoundButton inherits Rectangle {
 }
 
 // Settings, opened by double-tapping the centre.
-// Main level: WiFi, Date, Facing. Facing opens the direction ring.
+// Main level: WiFi, Date, Facing, and "Pair a phone" for everything else.
+// Facing opens the direction ring.
 export component DirectionSelector inherits Rectangle {
     width: Theme.display-size;
     height: Theme.display-size;
@@ -99,6 +100,8 @@ export component DirectionSelector inherits Rectangle {
     callback close();
     callback wifi-settings();
     callback date-toggled();
+    // Show the QR code that opens the settings page on a phone
+    callback pair-phone();
 
     // Which page is showing: the menu, or the direction ring
     property <bool> picking-direction: false;
@@ -126,7 +129,7 @@ export component DirectionSelector inherits Rectangle {
             x: 70px;
             y: 114px;
             width: 340px;
-            spacing: 12px;
+            spacing: 10px;
 
             SettingRow {
                 label: "WIFI";
@@ -148,21 +151,35 @@ export component DirectionSelector inherits Rectangle {
             }
         }
 
-        if root.web-address != "": Text {
-            y: 330px;
-            width: root.width;
-            text: "MORE ON YOUR PHONE · " + root.web-address;
-            font-family: Theme.font-mono;
-            font-size: 12px;
-            letter-spacing: 1px;
-            color: Theme.fg-faint;
-            horizontal-alignment: center;
+        // Everything else is on the phone: this shows a QR code to get there
+        if root.web-address != "": Rectangle {
+            x: Theme.clock-center - self.width / 2;
+            y: 326px;
+            width: 290px;
+            height: 40px;
+            border-radius: 20px;
+            border-width: 1px;
+            border-color: Theme.accent-faint;
+            background: pair-touch.pressed ? Theme.surface : Theme.bg;
+            Text {
+                text: "MORE · PAIR A PHONE ›";
+                font-family: Theme.font-mono;
+                font-size: 16px;
+                font-weight: 500;
+                letter-spacing: 1.5px;
+                color: Theme.accent;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            pair-touch := TouchArea {
+                clicked => { root.pair-phone(); }
+            }
         }
 
         RoundButton {
             x: Theme.clock-center - self.width / 2;
-            y: 364px;
-            size: 60px;
+            y: 372px;
+            size: 56px;
             label: "×";
             activated => { root.close(); }
         }

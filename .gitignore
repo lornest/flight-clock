@@ -1,1 +1,3 @@
 /target
+# Signing keys: only the .pub halves belong in the repo
+*.key

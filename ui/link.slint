@@ -1,0 +1,92 @@
+import { Theme } from "theme.slint";
+import { Ring } from "shapes.slint";
+import { QrCard } from "wifi_setup.slint";
+
+// QR code that opens the settings page on a phone, already paired.
+// Shown for first-run setup (no location yet) and for "Pair a phone".
+export component PhoneLink inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <image> code;
+    // First-run setup rather than pairing another phone
+    in property <bool> first-run: false;
+    in property <string> web-address: "";
+    callback dismiss();
+
+    // Swallow taps
+    TouchArea { }
+
+    Ring { r: 236px; border-width: 2px; border-color: Theme.accent-soft; }
+
+    Text {
+        y: 26px;
+        width: root.width;
+        text: root.first-run ? "FINISH SETUP" : "PAIR A PHONE";
+        font-family: Theme.font-mono;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: 3px;
+        color: Theme.accent;
+        horizontal-alignment: center;
+    }
+
+    QrCard {
+        y: 52px;
+        code: root.code;
+    }
+
+    Text {
+        y: 262px;
+        width: root.width;
+        text: "Scan with your phone's camera";
+        font-family: Theme.font-display;
+        font-size: 20px;
+        font-weight: 500;
+        color: Theme.fg;
+        horizontal-alignment: center;
+    }
+    Text {
+        y: 290px;
+        width: root.width;
+        text: root.first-run ? "to tell the clock where it is" : "to open the clock's settings";
+        font-family: Theme.font-mono;
+        font-size: 16px;
+        color: Theme.fg-dim;
+        horizontal-alignment: center;
+    }
+    Text {
+        y: 314px;
+        width: root.width;
+        text: root.web-address;
+        font-family: Theme.font-mono;
+        font-size: 16px;
+        color: Theme.fg-dim;
+        horizontal-alignment: center;
+    }
+
+    Rectangle {
+        x: Theme.clock-center - self.width / 2;
+        y: 346px;
+        width: root.first-run ? 150px : 60px;
+        height: 60px;
+        border-radius: 30px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: touch.pressed ? Theme.surface : Theme.bg;
+        Text {
+            text: root.first-run ? "LATER" : "×";
+            font-family: root.first-run ? Theme.font-mono : Theme.font-display;
+            font-size: root.first-run ? 16px : Theme.font-3xl;
+            font-weight: 500;
+            letter-spacing: root.first-run ? 2px : 0px;
+            color: Theme.fg-dim;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea {
+            clicked => { root.dismiss(); }
+        }
+    }
+}

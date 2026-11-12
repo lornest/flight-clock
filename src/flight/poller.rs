@@ -74,14 +74,14 @@ impl NewFlightWithInfo {
 
 /// Flight polling loop that runs in a background thread.
 pub struct Poller {
-    location: Arc<Mutex<Location>>,
+    location: Arc<Mutex<Option<Location>>>,
     poll_interval_ms: Arc<AtomicU64>,
     network_ready: Arc<AtomicBool>,
 }
 
 impl Poller {
     pub fn new(
-        location: Arc<Mutex<Location>>,
+        location: Arc<Mutex<Option<Location>>>,
         poll_interval_ms: Arc<AtomicU64>,
         network_ready: Arc<AtomicBool>,
     ) -> Self {
@@ -93,7 +93,8 @@ impl Poller {
     }
 
     /// Run the polling loop forever, reporting each step through `on_event`.
-    /// Pauses while the WiFi setup hotspot is up.
+    /// Pauses while the WiFi setup hotspot is up, and until the clock has
+    /// been told where it is.
     pub fn run<F>(&self, on_event: F)
     where
         F: Fn(PollEvent) + Send + 'static,
@@ -106,11 +107,15 @@ impl Poller {
                 continue;
             }
 
+            let Some(loc) = *self.location.lock().unwrap() else {
+                std::thread::sleep(Duration::from_secs(1));
+                continue;
+            };
+
             let started = Instant::now();
             let interval = self.poll_interval_ms.load(Ordering::Relaxed);
             on_event(PollEvent::Fetching);
 
-            let loc = *self.location.lock().unwrap();
             match fetch_flights_in_radius(loc.lat, loc.lon, loc.max_radius_nm) {
                 Ok(flights) => {
                     let valid = filter_valid_flights(flights);

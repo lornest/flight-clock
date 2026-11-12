@@ -15,6 +15,8 @@ export component DigitalClock inherits Rectangle {
     // SVG paths: progress arc and the plane at its end
     in property <string> progress-path: "";
     in property <string> plane-path: "";
+    // False until the Pi has the time from the network; the time then reads "--:--"
+    in property <bool> time-known: true;
 
     Ring { r: 236px; border-width: 2px; border-color: Theme.line; }
 
@@ -39,12 +41,24 @@ export component DigitalClock inherits Rectangle {
         font-size: 118px;
         font-weight: 700;
         letter-spacing: -3px;
-        color: #FFFFFF;
+        color: Theme.fg;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
 
-    if root.show-date: Rectangle {
+    if !root.time-known: Text {
+        y: 292px;
+        width: parent.width;
+        text: "SETTING THE TIME";
+        font-family: Theme.font-mono;
+        font-size: 16px;
+        font-weight: 500;
+        letter-spacing: 2px;
+        color: Theme.accent;
+        horizontal-alignment: center;
+    }
+
+    if root.show-date && root.time-known: Rectangle {
         x: 171px;
         y: 322px;
         width: 138px;

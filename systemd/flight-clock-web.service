@@ -1,0 +1,59 @@
+[Unit]
+Description=FlightClock settings page and WiFi setup portal
+Documentation=https://github.com/lornest/flight-clock
+# Started and stopped with the clock: restarting flight-clock.service (as the
+# updater does) restarts this too, so both always run the same release.
+After=flight-clock.service
+PartOf=flight-clock.service
+
+[Service]
+Type=simple
+# The part of FlightClock that talks to the network runs without privileges.
+# It asks the clock (root) for anything else over /run/flight-clock/web.sock.
+User=flight-clock-web
+Group=flight-clock-web
+ExecStart=/opt/flight-clock/flight-clock web
+Restart=always
+RestartSec=5
+# After a rollback to a release from before the split, the binary doesn't
+# know "web" and exits 2; that release serves the page itself. Stay stopped.
+RestartPreventExitStatus=2
+StandardOutput=journal
+StandardError=journal
+MemoryMax=48M
+
+# Paired phones: /var/lib/flight-clock-web/web-sessions.json
+StateDirectory=flight-clock-web
+StateDirectoryMode=0700
+
+# Port 80, and nothing else
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+
+# Read-only view of the system; no home folders, devices or other users' /tmp
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+# Enabled as a "wants" of the clock, so it needs no change to that unit
+WantedBy=flight-clock.service

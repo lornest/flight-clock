@@ -3,7 +3,9 @@
 //!
 //! - Boot: if the OS has a saved network, wait for it. A device that was
 //!   already set up stays on its network and never shows setup.
-//! - No saved network, or it can't be reached: start the setup hotspot.
+//! - No saved network, or it can't be reached: start the setup hotspot. It
+//!   is WPA2 with a new random password each time; the screen shows it as a
+//!   QR code, so what's typed into the setup page isn't sent in the clear.
 //! - The user can open setup any time from the settings screen, and cancel
 //!   back to the saved network.
 //! - Setup open with a saved network and nobody using the portal: retry the
@@ -12,7 +14,7 @@
 //! - Online but the network disappears for several minutes: start setup.
 //! - Back online after the hotspot has been up: reclaim the `.local` name.
 
-use crate::wifi::manager::{Network, WifiManager};
+use crate::wifi::manager::{new_hotspot_password, Network, WifiManager};
 use crate::wifi::portal::PortalState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -45,6 +47,8 @@ pub enum WifiUiState {
         status: String,
         is_error: bool,
         can_cancel: bool,
+        /// The hotspot's password; empty while it isn't up.
+        password: String,
     },
 }
 
@@ -105,6 +109,7 @@ impl<F: Fn(WifiUiState)> Supervisor<F> {
                         status: "Simulated: WiFi control only works on the Pi.".into(),
                         is_error: false,
                         can_cancel: true,
+                        password: new_hotspot_password(),
                     });
                 }
                 WifiCommand::CancelSetup | WifiCommand::Connect { .. } => {
@@ -223,6 +228,7 @@ impl<F: Fn(WifiUiState), N: Network> Supervisor<F, N> {
             status: format!("Connecting to {}...", ssid),
             is_error: false,
             can_cancel: false,
+            password: String::new(),
         });
 
         match self.wifi.connect(ssid, password) {
@@ -254,6 +260,7 @@ impl<F: Fn(WifiUiState), N: Network> Supervisor<F, N> {
             status: "Starting setup network...".into(),
             is_error: false,
             can_cancel: false,
+            password: String::new(),
         });
 
         // Scan before the hotspot comes up; the radio can't scan in AP mode.
@@ -267,17 +274,20 @@ impl<F: Fn(WifiUiState), N: Network> Supervisor<F, N> {
             portal.active = true;
         }
 
-        let started = self.wifi.start_ap();
+        // A new password for every setup session
+        let mut password = new_hotspot_password();
+        let started = self.wifi.start_ap(&password);
         self.hotspot_used |= started.is_ok();
         let (status, is_error) = match started {
-            Ok(()) if message.is_empty() => ("Waiting for setup...".to_string(), false),
+            Ok(()) if message.is_empty() => ("The setup page will open in up to 10 seconds.".to_string(), false),
             Ok(()) => (message.to_string(), is_error),
             Err(e) => {
                 eprintln!("Setup hotspot failed: {}", e);
+                password.clear();
                 (format!("Couldn't start the setup network: {}", e), true)
             }
         };
-        (self.notify)(WifiUiState::Setup { status, is_error, can_cancel });
+        (self.notify)(WifiUiState::Setup { status, is_error, can_cancel, password });
 
         Mode::Setup { user_initiated, since: Instant::now() }
     }
@@ -319,6 +329,7 @@ mod tests {
         reconnect_fails: bool,
         ap_up: bool,
         ap_starts: u32,
+        ap_passwords: Vec<String>,
         reclaims: u32,
     }
 
@@ -338,11 +349,12 @@ mod tests {
         fn scan_networks(&self) -> Vec<ScannedNetwork> {
             vec![ScannedNetwork { ssid: "Home".into(), signal: 80, encrypted: true }]
         }
-        fn start_ap(&mut self) -> Result<(), String> {
+        fn start_ap(&mut self, password: &str) -> Result<(), String> {
             let mut s = self.0.borrow_mut();
             if s.ap_fails {
                 return Err("no AP mode".into());
             }
+            s.ap_passwords.push(password.to_string());
             s.ap_up = true;
             s.connected = false;
             s.ap_starts += 1;
@@ -457,6 +469,33 @@ mod tests {
         let m = h.sup.start();
         assert!(is_setup(&m));
         assert!(matches!(h.last_ui(), WifiUiState::Setup { can_cancel: true, is_error: true, .. }));
+    }
+
+    // --- Hotspot password ---
+
+    #[test]
+    fn each_setup_session_gets_its_own_password_and_shows_it() {
+        let mut h = Harness::new(FakeState { saved: true, ..Default::default() });
+        let mode = h.sup.enter_setup(true, "", false);
+        let WifiUiState::Setup { password: first, .. } = h.last_ui() else { panic!("not in setup") };
+        assert_eq!(first.len(), 14);
+        assert_eq!(h.net.borrow().ap_passwords, vec![first.clone()]);
+
+        // A failed join brings the hotspot back with a different password
+        h.net.borrow_mut().connect_fails = true;
+        h.send(connect_cmd());
+        let mode = h.sup.tick(mode);
+        assert!(is_setup(&mode));
+        let WifiUiState::Setup { password: second, .. } = h.last_ui() else { panic!("not in setup") };
+        assert_ne!(first, second);
+        assert_eq!(h.net.borrow().ap_passwords.len(), 2);
+    }
+
+    #[test]
+    fn no_password_is_shown_when_the_hotspot_fails() {
+        let mut h = Harness::new(FakeState { ap_fails: true, ..Default::default() });
+        h.sup.start();
+        assert!(matches!(h.last_ui(), WifiUiState::Setup { is_error: true, ref password, .. } if password.is_empty()));
     }
 
     // --- Hostname reclaim after the hotspot ---

@@ -657,12 +657,54 @@ mod tests {
     }
 
     #[test]
+    fn reads_avahis_host_name_reply() {
+        assert_eq!(parse_busctl_string("s \"flight-clock-2\"\n").as_deref(), Some("flight-clock-2"));
+        assert_eq!(parse_busctl_string("s \"flight-clock\"").as_deref(), Some("flight-clock"));
+        assert_eq!(parse_busctl_string("s \"\""), None);
+        assert_eq!(parse_busctl_string("Failed to connect to bus"), None);
+    }
+
+    #[test]
     fn spots_the_missing_key_type_error() {
         let raw = "Error: 802-11-wireless-security.key-mgmt: property is missing.";
         assert!(is_missing_key_mgmt(raw));
         assert!(!is_missing_key_mgmt("Error: Secrets were required, but not provided."));
         assert!(friendly_nm_error(raw).contains("try again"));
     }
+}
+
+/// After the first restart, how often and how many times to check that avahi
+/// took the real hostname.
+const RECLAIM_CHECK_EVERY: Duration = Duration::from_secs(15);
+const RECLAIM_CHECKS: u32 = 4;
+
+fn restart_avahi() {
+    match Command::new("systemctl")
+        .args(["try-restart", "avahi-daemon.service"])
+        .status()
+    {
+        Ok(s) if s.success() => eprintln!("Restarted avahi to reclaim the .local name"),
+        Ok(s) => eprintln!("avahi restart exited with {}", s),
+        Err(e) => eprintln!("avahi restart failed: {}", e),
+    }
+}
+
+/// The host name avahi is announcing (without ".local"), asked over D-Bus.
+fn avahi_host_name() -> Option<String> {
+    let out = Command::new("busctl")
+        .args(["call", "org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server", "GetHostName"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_busctl_string(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// busctl prints a string reply as: s "flight-clock"
+fn parse_busctl_string(output: &str) -> Option<String> {
+    let value = output.trim().strip_prefix("s \"")?.strip_suffix('"')?;
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// The WiFi and host operations the supervisor needs. `WifiManager` is the
@@ -715,14 +757,32 @@ impl Network for WifiManager {
     /// `<host>-2.local` and stop answering on the usual name. A restart makes
     /// it announce the real hostname again. `try-restart` does nothing if
     /// avahi isn't running.
+    ///
+    /// One restart isn't always enough: done the moment WiFi is back, avahi
+    /// can meet the same stale announcement and come up as `<host>-2` again.
+    /// So the name is checked a few times afterwards, in the background, and
+    /// avahi restarted again while it is still wrong.
     fn reclaim_hostname(&mut self) {
-        match Command::new("systemctl")
-            .args(["try-restart", "avahi-daemon.service"])
-            .status()
-        {
-            Ok(s) if s.success() => eprintln!("Restarted avahi to reclaim the .local name"),
-            Ok(s) => eprintln!("avahi restart exited with {}", s),
-            Err(e) => eprintln!("avahi restart failed: {}", e),
-        }
+        restart_avahi();
+        std::thread::spawn(|| {
+            let Some(wanted) = std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|h| h.trim().to_string())
+                .filter(|h| !h.is_empty())
+            else {
+                return;
+            };
+            for _ in 0..RECLAIM_CHECKS {
+                std::thread::sleep(RECLAIM_CHECK_EVERY);
+                match avahi_host_name() {
+                    Some(name) if name != wanted => {
+                        eprintln!("avahi is announcing {:?}, not {:?}; restarting it again", name, wanted);
+                        restart_avahi();
+                    }
+                    // Right name, or avahi can't be asked (not running): nothing to do
+                    _ => return,
+                }
+            }
+        });
     }
 }

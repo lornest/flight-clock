@@ -61,6 +61,13 @@ section here becomes its GitHub release notes.
 - Settings are saved by replacing the file whole, so a power cut can't
   corrupt them.
 
+### Fixed
+- After the setup hotspot, the clock could come back as `<name>-2.local` and
+  stop answering on its usual name. It now checks the name it is announcing
+  and reclaims the right one.
+- Re-joining a network the clock already had saved could fail with
+  "key-mgmt: property is missing".
+
 ## [0.2.3] - 2026-11-12
 
 ### Changed

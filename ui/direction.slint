@@ -9,21 +9,21 @@ component SettingRow inherits Rectangle {
     in property <bool> opens: false;      // shows a chevron: tapping opens a page
     callback activated();
 
-    height: 52px;
-    border-radius: 26px;
+    height: 62px;
+    border-radius: 31px;
     border-width: 1px;
     border-color: Theme.line;
     background: touch.pressed ? Theme.surface : Theme.bg;
 
     HorizontalLayout {
-        padding-left: 22px;
-        padding-right: 20px;
+        padding-left: 26px;
+        padding-right: 24px;
         spacing: 10px;
 
         Text {
             text: root.label;
             font-family: Theme.font-mono;
-            font-size: 12px;
+            font-size: 15px;
             font-weight: 500;
             letter-spacing: 2px;
             color: Theme.fg-dim;
@@ -33,7 +33,7 @@ component SettingRow inherits Rectangle {
             horizontal-stretch: 1;
             text: root.value;
             font-family: Theme.font-display;
-            font-size: Theme.font-base;
+            font-size: 21px;
             font-weight: 600;
             color: root.highlight ? Theme.accent : Theme.fg;
             horizontal-alignment: right;
@@ -43,7 +43,7 @@ component SettingRow inherits Rectangle {
         if root.opens: Text {
             text: "›";
             font-family: Theme.font-display;
-            font-size: Theme.font-xl;
+            font-size: 28px;
             color: Theme.fg-faint;
             vertical-alignment: center;
         }
@@ -111,11 +111,11 @@ export component DirectionSelector inherits Rectangle {
     // --- Main menu ---
     if !root.picking-direction: Rectangle {
         Text {
-            y: 104px;
+            y: 84px;
             width: root.width;
             text: "SETTINGS";
             font-family: Theme.font-mono;
-            font-size: 11px;
+            font-size: 14px;
             font-weight: 500;
             letter-spacing: 3px;
             color: Theme.accent;
@@ -123,9 +123,9 @@ export component DirectionSelector inherits Rectangle {
         }
 
         VerticalLayout {
-            x: 100px;
-            y: 128px;
-            width: 280px;
+            x: 70px;
+            y: 114px;
+            width: 340px;
             spacing: 12px;
 
             SettingRow {
@@ -149,11 +149,11 @@ export component DirectionSelector inherits Rectangle {
         }
 
         if root.web-address != "": Text {
-            y: 318px;
+            y: 330px;
             width: root.width;
             text: "MORE ON YOUR PHONE · " + root.web-address;
             font-family: Theme.font-mono;
-            font-size: 10px;
+            font-size: 12px;
             letter-spacing: 1px;
             color: Theme.fg-faint;
             horizontal-alignment: center;
@@ -161,7 +161,8 @@ export component DirectionSelector inherits Rectangle {
 
         RoundButton {
             x: Theme.clock-center - self.width / 2;
-            y: 352px;
+            y: 364px;
+            size: 60px;
             label: "×";
             activated => { root.close(); }
         }
@@ -172,11 +173,11 @@ export component DirectionSelector inherits Rectangle {
         Ring { r: 175px; border-color: Theme.grid-faint; }
 
         Text {
-            y: 128px;
+            y: 124px;
             width: root.width;
             text: "FACING";
             font-family: Theme.font-mono;
-            font-size: 11px;
+            font-size: 14px;
             font-weight: 500;
             letter-spacing: 3px;
             color: Theme.accent;
@@ -206,7 +207,7 @@ export component DirectionSelector inherits Rectangle {
             Text {
                 text: dir.value;
                 font-family: Theme.font-display;
-                font-size: Theme.font-xl;
+                font-size: 28px;
                 font-weight: 600;
                 color: parent.selected ? Theme.bg : Theme.fg;
                 horizontal-alignment: center;

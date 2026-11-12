@@ -109,6 +109,7 @@ fn main() {
     ui.set_radar_ring_labels(model(ring_labels(config.radius_nm)));
     ui.set_clock_face(normalise_face(&config.clock_face).into());
     ui.set_show_date(config.show_date);
+    apply_colours(&ui, &config);
 
     // Dev aid: FLIGHT_CLOCK_SCREEN=radar starts on the radar (e.g. for screenshots)
     let start_on_radar = std::env::var("FLIGHT_CLOCK_SCREEN").as_deref() == Ok("radar");
@@ -436,9 +437,35 @@ fn apply_settings_event(
             ui.set_radar_ring_labels(model(ring_labels(cfg.radius_nm)));
             ui.set_clock_face(normalise_face(&cfg.clock_face).into());
             ui.set_show_date(cfg.show_date);
+            apply_colours(ui, &cfg);
             ui.invoke_update_clock();
         }
     }
+}
+
+/// Apply the chosen accent and background colours.
+fn apply_colours(ui: &App, cfg: &Config) {
+    let theme = ui.global::<Theme>();
+    let (ground, surface, panel) = cfg.background_hex();
+    let set = |hex: &str, f: &dyn Fn(slint::Color)| {
+        if let Some(c) = parse_hex_colour(hex) {
+            f(c)
+        }
+    };
+    set(cfg.accent_hex(), &|c| theme.set_accent(c));
+    set(ground, &|c| theme.set_bg(c));
+    set(surface, &|c| theme.set_surface(c));
+    set(panel, &|c| theme.set_panel(c));
+}
+
+/// "#RRGGBB" to a Slint colour.
+fn parse_hex_colour(hex: &str) -> Option<slint::Color> {
+    let hex = hex.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let v = u32::from_str_radix(hex, 16).ok()?;
+    Some(slint::Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
 /// Load the config, change one setting, write it back.

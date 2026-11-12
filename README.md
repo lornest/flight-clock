@@ -4,6 +4,7 @@ A round clock that shows the aircraft flying overhead. Built for a
 Raspberry Pi Zero 2W with a Pimoroni HyperPixel 2.1 Round touch display.
 
 - Analogue or digital clock face
+- Five accent colours and two backgrounds (aviator blue or black)
 - Alert when a new aircraft comes into range, with its route
 - Radar of nearby traffic, oriented to the way the clock faces
 - Settings from your phone at `http://<clock>.local`
@@ -39,7 +40,7 @@ skip the display setup (e.g. `... | sudo CHANNEL=beta bash`).
 - **Double-tap the centre**: settings (WiFi, date, facing direction).
 - **Double-tap left/right**: clock / radar.
 - **Hold the FlightClock logo**: switch analogue / digital.
-- **Settings page**: everything above plus location, radar radius and updates.
+- **Settings page**: everything above plus location, radar radius, colours and updates.
 
 ## Updates
 

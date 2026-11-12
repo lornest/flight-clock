@@ -4,6 +4,22 @@ use std::path::Path;
 
 const CONFIG_PATH: &str = "/etc/flight-clock/config.json";
 
+/// Backgrounds: (config id, name, ground, surface, date panel). The first is the default.
+pub const BACKGROUNDS: [(&str, &str, &str, &str, &str); 2] = [
+    ("aviator-blue", "Aviator blue", "#0B1118", "#121A23", "#141D28"),
+    ("black", "Black", "#000000", "#101214", "#15181B"),
+];
+
+/// Accent colours from the design: (config id, name, hex), in the design's order.
+pub const DEFAULT_ACCENT: &str = "coral";
+pub const ACCENTS: [(&str, &str, &str); 5] = [
+    ("amber", "Amber", "#FFB547"),
+    ("powder-blue", "Powder blue", "#7FD3D8"),
+    ("coral", "Coral", "#FF7F6B"),
+    ("lime", "Lime", "#B4E06A"),
+    ("lilac", "Lilac", "#B9A2FF"),
+];
+
 /// Config file path: $FLIGHT_CLOCK_CONFIG if set (e.g. for local testing),
 /// else /etc/flight-clock/config.json.
 pub fn config_path() -> String {
@@ -41,6 +57,12 @@ pub struct Config {
     /// Install updates automatically (daily). Off: only check.
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
+    /// Accent colour id from `ACCENTS`
+    #[serde(default = "default_accent")]
+    pub accent: String,
+    /// Background id from `BACKGROUNDS`
+    #[serde(default = "default_background")]
+    pub background: String,
 }
 
 fn default_latitude() -> f64 {
@@ -67,6 +89,12 @@ fn default_update_channel() -> String {
 fn default_auto_update() -> bool {
     true
 }
+fn default_accent() -> String {
+    DEFAULT_ACCENT.to_string()
+}
+fn default_background() -> String {
+    BACKGROUNDS[0].0.to_string()
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -79,11 +107,29 @@ impl Default for Config {
             show_date: default_show_date(),
             update_channel: default_update_channel(),
             auto_update: default_auto_update(),
+            accent: default_accent(),
+            background: default_background(),
         }
     }
 }
 
 impl Config {
+    /// The accent colour as "#RRGGBB"; the default (coral) if the id is unknown.
+    pub fn accent_hex(&self) -> &'static str {
+        let find = |want: &str| ACCENTS.iter().find(|(id, _, _)| *id == want).map(|(_, _, hex)| *hex);
+        find(&self.accent).or_else(|| find(DEFAULT_ACCENT)).unwrap_or(ACCENTS[0].2)
+    }
+
+    /// Background colours as "#RRGGBB": (ground, surface, date panel).
+    /// Aviator blue if the id is unknown.
+    pub fn background_hex(&self) -> (&'static str, &'static str, &'static str) {
+        let b = BACKGROUNDS
+            .iter()
+            .find(|(id, ..)| *id == self.background)
+            .unwrap_or(&BACKGROUNDS[0]);
+        (b.2, b.3, b.4)
+    }
+
     pub fn location(&self) -> Location {
         Location {
             lat: self.latitude,
@@ -132,5 +178,43 @@ impl Config {
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
         fs::write(p, json).map_err(|e| format!("Failed to write config: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod accent_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_coral() {
+        assert_eq!(Config::default().accent_hex(), "#FF7F6B");
+    }
+
+    #[test]
+    fn unknown_accent_falls_back_to_coral() {
+        let cfg = Config { accent: "magenta".into(), ..Config::default() };
+        assert_eq!(cfg.accent_hex(), "#FF7F6B");
+    }
+
+    #[test]
+    fn amber_still_selectable() {
+        let cfg = Config { accent: "amber".into(), ..Config::default() };
+        assert_eq!(cfg.accent_hex(), "#FFB547");
+    }
+
+    #[test]
+    fn old_config_without_colours_loads() {
+        let cfg: Config = serde_json::from_str(r#"{"latitude":55.9,"longitude":-3.2}"#).unwrap();
+        assert_eq!(cfg.accent, "coral");
+        assert_eq!(cfg.background, "aviator-blue");
+    }
+
+    #[test]
+    fn background_lookup() {
+        assert_eq!(Config::default().background_hex().0, "#0B1118");
+        let black = Config { background: "black".into(), ..Config::default() };
+        assert_eq!(black.background_hex().0, "#000000");
+        let unknown = Config { background: "white".into(), ..Config::default() };
+        assert_eq!(unknown.background_hex().0, "#0B1118");
     }
 }

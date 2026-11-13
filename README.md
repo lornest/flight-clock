@@ -80,6 +80,11 @@ asks the clock for anything else over a Unix socket (`src/ipc.rs`). On a dev
 machine the web server runs on a thread of the one process, over the same
 socket.
 
+Both units are sandboxed by systemd. The clock's unit can't use
+`PrivateDevices`, `DeviceAllow`, `ProtectClock` or `ProtectKernelTunables`:
+it opens the display and touchscreen itself and switches the backlight
+through `/sys`. Tests in `src/update.rs` hold the unit to that.
+
 Build for the Pi (arm64 Docker container) and try it on a clock:
 ```
 scripts/cross-build.sh

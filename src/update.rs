@@ -672,6 +672,82 @@ mod tests {
         assert!(HEALTH_WAIT > HEALTH_SETTLE);
     }
 
+    /// The value(s) of a directive in the clock's unit file.
+    fn unit_values(key: &str) -> Vec<&'static str> {
+        include_str!("../systemd/flight-clock.service")
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix(key)?.strip_prefix('='))
+            .map(str::trim)
+            .collect()
+    }
+
+    #[test]
+    fn clock_service_is_sandboxed() {
+        for key in [
+            "NoNewPrivileges",
+            "ProtectHome",
+            "PrivateTmp",
+            "ProtectKernelModules",
+            "ProtectKernelLogs",
+            "ProtectControlGroups",
+            "RestrictNamespaces",
+            "RestrictSUIDSGID",
+            "LockPersonality",
+            "MemoryDenyWriteExecute",
+        ] {
+            assert_eq!(unit_values(key), ["yes"], "{}", key);
+        }
+        assert_eq!(unit_values("ProtectSystem"), ["full"]);
+        assert_eq!(unit_values("SystemCallFilter"), ["@system-service"]);
+
+        // The powers that would undo the rest stay out
+        let caps = unit_values("CapabilityBoundingSet").join(" ");
+        assert!(!caps.is_empty());
+        for cap in ["CAP_SYS_ADMIN", "CAP_SYS_MODULE", "CAP_SYS_PTRACE", "CAP_SYS_BOOT", "CAP_SYS_RAWIO", "CAP_SYS_TIME"] {
+            assert!(!caps.contains(cap), "{}", cap);
+        }
+        // ...and the ones the clock relies on stay in
+        for cap in ["CAP_CHOWN", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"] {
+            assert!(caps.contains(cap), "{}", cap);
+        }
+    }
+
+    #[test]
+    fn sandbox_leaves_the_clock_what_it_needs() {
+        // Each of these would take the display, touch or backlight away:
+        // the app opens /dev/dri and /dev/input itself, and writes to /sys.
+        // ProtectClock implies a device allow-list, so it counts too.
+        for key in ["PrivateDevices", "DeviceAllow", "DevicePolicy", "ProtectClock", "ProtectKernelTunables", "ProtectProc"] {
+            assert!(unit_values(key).is_empty(), "{} would break the clock", key);
+        }
+        // Everything it writes: settings, and the WiFi setup files
+        let writable = unit_values("ReadWritePaths").join(" ");
+        for path in ["/etc/flight-clock", "/etc/NetworkManager/dnsmasq-shared.d", "/etc/wpa_supplicant"] {
+            assert!(writable.contains(path), "{}", path);
+        }
+        // "strict" would also make /var/lib/flight-clock and /run read-only
+        assert_ne!(unit_values("ProtectSystem"), ["strict"]);
+        // WiFi and input device handling need netlink; the web socket and D-Bus need unix
+        let families = unit_values("RestrictAddressFamilies").join(" ");
+        for family in ["AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"] {
+            assert!(families.contains(family), "{}", family);
+        }
+        // Still root, still watched
+        assert_eq!(unit_values("User"), ["root"]);
+        assert_eq!(unit_values("WatchdogSec"), ["120"]);
+    }
+
+    #[test]
+    fn the_hardened_unit_reaches_existing_clocks() {
+        // Units aren't replaced by the updater; a migration has to install it
+        let migration = include_str!("../migrations/0002-harden-clock-service.sh");
+        assert!(migration.contains("systemd/flight-clock.service"));
+        assert!(migration.contains("/etc/systemd/system/flight-clock.service"));
+        assert!(migration.contains("systemctl daemon-reload"));
+        // Fresh installs get it from install.sh
+        assert!(include_str!("../scripts/install.sh").contains("flight-clock.service"));
+    }
+
     #[test]
     fn own_version_parses() {
         assert!(Version::parse(VERSION).is_some());

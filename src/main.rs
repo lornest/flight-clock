@@ -1065,7 +1065,10 @@ fn update_radar(
             }
 
             let (hx, hy) = heading_end(*x, *y, flight.track, facing_deg);
+            let icon = aircraft_icon(flight.kind, *x, *y, flight.track, facing_deg);
             RadarBeacon {
+                ring: if icon.is_empty() { 13.0 } else { ICON_RING_PX },
+                icon: icon.into(),
                 hex: flight.hex.clone().into(),
                 callsign: display_callsign(&flight.callsign, &flight.hex).into(),
                 x: *x as f32,
@@ -1093,6 +1096,20 @@ fn heading_end(x: f64, y: f64, track: Option<f64>, facing_deg: f64) -> (f64, f64
             (x + HEADING_LINE_PX * s, y - HEADING_LINE_PX * c)
         }
         None => (x, y),
+    }
+}
+
+/// Ring round the closest aircraft when it is drawn as an icon (the largest
+/// icon is about 30 px long)
+const ICON_RING_PX: f32 = 19.0;
+
+/// The outline for this aircraft at (x, y), turned to its track on a display
+/// whose top faces `facing_deg`. Empty when the size class or the track
+/// isn't known; the plain marker is drawn then.
+fn aircraft_icon(kind: flight::types::AircraftKind, x: f64, y: f64, track: Option<f64>, facing_deg: f64) -> String {
+    match track {
+        Some(track) => ui_paths::aircraft(kind, x, y, track - facing_deg),
+        None => String::new(),
     }
 }
 
@@ -1239,6 +1256,7 @@ fn update_alert(
             let (x, y) = (240.0 + sx, 240.0 + sy);
             let (hx, hy) = heading_end(x, y, flight.track, direction_to_degrees(facing_direction));
             AlertBeacon {
+                icon: aircraft_icon(flight.kind, x, y, flight.track, direction_to_degrees(facing_direction)).into(),
                 hex: flight.hex.clone().into(),
                 callsign: flight.callsign.clone().into(),
                 x: x as f32,
@@ -1279,6 +1297,7 @@ mod tests {
             track: None,
             baro_rate: None,
             aircraft_type: None,
+            kind: flight::types::AircraftKind::Unknown,
         }
     }
 
@@ -1322,6 +1341,20 @@ mod tests {
         // Network time switched off: the owner sets the time some other way
         assert!(synced_per_timedatectl("NTP=no\nNTPSynchronized=no\n"));
         assert!(synced_per_timedatectl(""));
+    }
+
+    #[test]
+    fn icons_need_a_known_class_and_a_track() {
+        use flight::types::AircraftKind::*;
+        assert!(!aircraft_icon(Large, 240.0, 240.0, Some(90.0), 0.0).is_empty());
+        // No track: nothing to point the icon along
+        assert!(aircraft_icon(Large, 240.0, 240.0, None, 0.0).is_empty());
+        assert!(aircraft_icon(Unknown, 240.0, 240.0, Some(90.0), 0.0).is_empty());
+        // Flying east on a display facing east points straight up, as flying north does facing north
+        assert_eq!(
+            aircraft_icon(Heavy, 100.0, 100.0, Some(90.0), 90.0),
+            aircraft_icon(Heavy, 100.0, 100.0, Some(0.0), 0.0)
+        );
     }
 
     #[test]

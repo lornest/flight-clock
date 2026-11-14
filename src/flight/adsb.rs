@@ -8,10 +8,11 @@ pub fn fetch_flights_in_radius(
     longitude: f64,
     radius_nm: f64,
 ) -> Result<Vec<Flight>, String> {
-    let url = format!(
-        "{}/lat/{}/lon/{}/dist/{}",
-        ADSB_BASE_URL, latitude, longitude, radius_nm
-    );
+    // Dev aid: FLIGHT_CLOCK_ADSB_URL points the clock at another server that
+    // answers the same way, e.g. a local one serving made-up aircraft
+    // (scripts/demo-feed.py) to see how the radar draws them.
+    let base = std::env::var("FLIGHT_CLOCK_ADSB_URL").unwrap_or_else(|_| ADSB_BASE_URL.to_string());
+    let url = format!("{}/lat/{}/lon/{}/dist/{}", base.trim_end_matches('/'), latitude, longitude, radius_nm);
 
     let response = super::http()
         .get(&url)

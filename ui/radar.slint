@@ -16,6 +16,12 @@ export struct RadarBeacon {
     // End of the heading line (same as x/y when the track is unknown)
     hx: float,
     hy: float,
+    // Outline of the aircraft, by size class and turned to its track (path
+    // commands in display coordinates, from src/ui_paths.rs). Empty when the
+    // class or the track isn't known: a square and a heading line instead.
+    icon: string,
+    // Radius of the ring round the closest aircraft
+    ring: float,
     // Earlier positions, oldest first (up to 3)
     trail: [TrailPoint],
     // Second label line, e.g. "FL340 452" (flight level / altitude, speed)
@@ -110,8 +116,8 @@ export component Radar inherits Rectangle {
             opacity: 0.4 + 0.2 * i;
         }
 
-        // Heading
-        if b.hx != b.x || b.hy != b.y: Line {
+        // Heading (the icon shows it by itself)
+        if b.icon == "" && (b.hx != b.x || b.hy != b.y): Line {
             x1: b.x;
             y1: b.y;
             x2: b.hx;
@@ -121,7 +127,11 @@ export component Radar inherits Rectangle {
         }
 
         // Marker
-        Rectangle {
+        if b.icon != "": Shape {
+            commands: b.icon;
+            fill: b.highlight ? Theme.accent : Theme.fg-soft;
+        }
+        if b.icon == "": Rectangle {
             x: (b.x - 5) * 1px;
             y: (b.y - 5) * 1px;
             width: 10px;
@@ -131,7 +141,7 @@ export component Radar inherits Rectangle {
         if b.highlight: Dot {
             cx: b.x * 1px;
             cy: b.y * 1px;
-            r: 13px;
+            r: b.ring * 1px;
             background: transparent;
             border-width: 1px;
             border-color: Theme.accent-soft;

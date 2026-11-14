@@ -5,6 +5,13 @@ section here becomes its GitHub release notes.
 
 ## [0.3.1] - 2026-11-13
 
+### Added
+- Aircraft on the radar and alerts are drawn by size: light aircraft, small
+  jets and turboprops, airliners, wide-bodies and helicopters each have their
+  own outline, pointing the way they're flying. The size comes from the
+  flight data the clock already fetches. Aircraft that don't report one keep
+  the square marker.
+
 ### Security
 - The clock's own service is now sandboxed too: read-only system folders, no
   access to home folders, no mounting, module loading or clock setting, and

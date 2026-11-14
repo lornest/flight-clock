@@ -190,6 +190,38 @@ pub struct AdsbLolRouteResponse {
     pub callsign: Option<String>,
 }
 
+/// What kind of aircraft to draw, from the size class an aircraft broadcasts
+/// about itself (the feed's `category`, the ADS-B emitter category).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AircraftKind {
+    /// Light aircraft, gliders and ultralights (A1, B1, B4)
+    Light,
+    /// Business jets, turboprops and other small or fast aircraft (A2, A6)
+    Small,
+    /// Single-aisle airliners (A3, A4)
+    Large,
+    /// Wide-bodies (A5)
+    Heavy,
+    /// Helicopters (A7)
+    Rotor,
+    /// No category sent, or one with no icon of its own (balloons, drones,
+    /// ground vehicles): drawn as the plain marker
+    Unknown,
+}
+
+impl AircraftKind {
+    pub fn from_category(category: Option<&str>) -> Self {
+        match category.map(str::trim).unwrap_or("").to_ascii_uppercase().as_str() {
+            "A1" | "B1" | "B4" => Self::Light,
+            "A2" | "A6" => Self::Small,
+            "A3" | "A4" => Self::Large,
+            "A5" => Self::Heavy,
+            "A7" => Self::Rotor,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Slim flight data sent to the UI (minimal fields)
 #[derive(Debug, Clone)]
 pub struct SlimFlight {
@@ -202,6 +234,7 @@ pub struct SlimFlight {
     pub track: Option<f64>,
     pub baro_rate: Option<i32>,
     pub aircraft_type: Option<String>,
+    pub kind: AircraftKind,
 }
 
 impl SlimFlight {
@@ -216,6 +249,29 @@ impl SlimFlight {
             track: f.track,
             baro_rate: f.baro_rate,
             aircraft_type: f.t.clone().or(f.msg_type.clone()),
+            kind: AircraftKind::from_category(f.category.as_deref()),
         })
+    }
+}
+
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+
+    #[test]
+    fn categories_map_to_icons() {
+        use AircraftKind::*;
+        for (category, kind) in [
+            ("A1", Light), ("B1", Light), ("B4", Light),
+            ("A2", Small), ("A6", Small),
+            ("A3", Large), ("A4", Large),
+            ("A5", Heavy),
+            ("A7", Rotor),
+            ("A0", Unknown), ("B2", Unknown), ("B6", Unknown), ("C2", Unknown), ("", Unknown), ("zz", Unknown),
+        ] {
+            assert_eq!(AircraftKind::from_category(Some(category)), kind, "{}", category);
+        }
+        assert_eq!(AircraftKind::from_category(None), Unknown);
+        assert_eq!(AircraftKind::from_category(Some(" a5 ")), Heavy);
     }
 }

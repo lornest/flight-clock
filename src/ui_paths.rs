@@ -166,12 +166,18 @@ const ROTOR: Outline = &[
 /// `heading_deg` clockwise from up. Empty for `Unknown`, which is drawn as
 /// the plain marker instead.
 pub fn aircraft(kind: AircraftKind, cx: f64, cy: f64, heading_deg: f64) -> String {
+    aircraft_sized(kind, cx, cy, heading_deg, 1.0)
+}
+
+/// As `aircraft`, `times` as large as on the radar (the details screen).
+pub fn aircraft_sized(kind: AircraftKind, cx: f64, cy: f64, heading_deg: f64, times: f64) -> String {
+    let scale = ICON_SCALE * times;
     match kind {
-        AircraftKind::Light => outline(LIGHT, cx, cy, heading_deg, ICON_SCALE),
-        AircraftKind::Small => outline(SMALL, cx, cy, heading_deg, ICON_SCALE),
-        AircraftKind::Large => outline(PLANE, cx, cy, heading_deg, LARGE_SCALE * ICON_SCALE),
-        AircraftKind::Heavy => outline(HEAVY, cx, cy, heading_deg, ICON_SCALE),
-        AircraftKind::Rotor => outline(ROTOR, cx, cy, heading_deg, ICON_SCALE),
+        AircraftKind::Light => outline(LIGHT, cx, cy, heading_deg, scale),
+        AircraftKind::Small => outline(SMALL, cx, cy, heading_deg, scale),
+        AircraftKind::Large => outline(PLANE, cx, cy, heading_deg, LARGE_SCALE * scale),
+        AircraftKind::Heavy => outline(HEAVY, cx, cy, heading_deg, scale),
+        AircraftKind::Rotor => outline(ROTOR, cx, cy, heading_deg, scale),
         AircraftKind::Unknown => String::new(),
     }
 }

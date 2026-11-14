@@ -235,6 +235,12 @@ pub struct SlimFlight {
     pub baro_rate: Option<i32>,
     pub aircraft_type: Option<String>,
     pub kind: AircraftKind,
+    /// Registration, e.g. "PH-EXN"
+    pub registration: Option<String>,
+    /// The type spelled out, e.g. "EMBRAER ERJ-170-200"
+    pub description: Option<String>,
+    /// The feed reports it on the ground rather than at an altitude
+    pub on_ground: bool,
 }
 
 impl SlimFlight {
@@ -250,6 +256,9 @@ impl SlimFlight {
             baro_rate: f.baro_rate,
             aircraft_type: f.t.clone().or(f.msg_type.clone()),
             kind: AircraftKind::from_category(f.category.as_deref()),
+            registration: f.r.as_deref().map(str::trim).filter(|r| !r.is_empty()).map(str::to_string),
+            description: f.desc.as_deref().map(str::trim).filter(|d| !d.is_empty()).map(str::to_string),
+            on_ground: matches!(f.alt_baro, Some(AltBaro::Ground(_))),
         })
     }
 }

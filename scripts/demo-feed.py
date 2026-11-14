@@ -8,7 +8,8 @@ each kind of aircraft without waiting for them to fly past.
 Answers any /lat/<lat>/lon/<lon>/dist/<nm> request with the same made-up
 aircraft, placed around whatever point was asked for: each size class
 (category) twice on different headings, one with no category and one with
-no track (both drawn as the plain square).
+no track (both drawn as the plain square). /hex/<address> answers with that
+one aircraft, as the details screen asks once an aircraft leaves the area.
 """
 import json, math, re, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -32,13 +33,20 @@ AIRCRAFT = [
 ]
 
 
+# The last area asked about, so /hex/ answers place aircraft the same way
+LAST_AREA = [51.47, -0.4543, 6.0]
+
+
 class Feed(BaseHTTPRequestHandler):
     def do_GET(self):
         m = re.match(r"/lat/(-?[\d.]+)/lon/(-?[\d.]+)/dist/([\d.]+)", self.path)
-        if not m:
+        one = re.match(r"/hex/([0-9a-f]{6})$", self.path)
+        if m:
+            LAST_AREA[:] = map(float, m.groups())
+        elif not one:
             self.send_error(404)
             return
-        lat, lon, radius = map(float, m.groups())
+        lat, lon, radius = LAST_AREA
         ac = []
         for i, (callsign, category, kind, bearing, share, track, alt, speed) in enumerate(AIRCRAFT):
             nm = share * radius
@@ -56,6 +64,8 @@ class Feed(BaseHTTPRequestHandler):
                 a["category"] = category
             if track is not None:
                 a["track"] = track
+            if one and a["hex"] != one.group(1):
+                continue
             ac.append(a)
         body = json.dumps({"ac": ac, "resultCount": len(ac)}).encode()
         self.send_response(200)

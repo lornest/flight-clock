@@ -9,7 +9,9 @@ import { DigitalClock } from "digital.slint";
 import { PairingCode } from "pairing.slint";
 import { PhoneLink } from "link.slint";
 import { Tour } from "tour.slint";
+import { Detail, FlightDetail } from "detail.slint";
 
+export { FlightDetail }
 export { Theme, AlertBeacon, AlertFlightDetail, RadarBeacon, TrailPoint, CompassLabel }
 
 export component App inherits Window {
@@ -81,6 +83,10 @@ export component App inherits Window {
     in property <bool> link-first-run: false;
     in property <image> link-qr;
 
+    // One aircraft's details, full screen (tapped on the radar)
+    in property <bool> detail-active: false;
+    in property <FlightDetail> detail;
+
     // Night mode: how dark to make the picture (0: not at all, 1: black)
     in property <float> night-dim: 0;
     // Guided tour of the gestures: 0 off, 1-4 the step, 5 finished
@@ -105,6 +111,8 @@ export component App inherits Window {
     callback show-date-toggled();
     // Pairing code dismissed on the clock
     callback pairing-cancelled();
+    // The details screen was tapped: back to the radar
+    callback detail-closed();
     // Swiped to the clock (0) or the radar (1)
     callback screen-swiped(int);
     // The screen was touched while dimmed or off for the night
@@ -148,7 +156,7 @@ export component App inherits Window {
     SwipeGestureHandler {
         width: root.width;
         height: root.height;
-        enabled: root.main-ui && !root.alert-active && !root.show-direction-selector;
+        enabled: root.main-ui && !root.alert-active && !root.show-direction-selector && !root.detail-active;
         handle-swipe-left: root.current-screen == 0;
         handle-swipe-right: root.current-screen == 1;
         handle-swipe-up: root.current-screen == 0;
@@ -205,6 +213,12 @@ export component App inherits Window {
     }
     }
 
+    // One aircraft's details (over the radar; alerts are held back while it's up)
+    if root.main-ui && root.detail-active: Detail {
+        flight: root.detail;
+        close => { root.detail-closed(); }
+    }
+
     // Alert overlay (shows over clock when active)
     if root.main-ui && root.alert-active: Alert {
         beacons: root.alert-beacons;
@@ -236,7 +250,7 @@ export component App inherits Window {
 
     // Guided tour, once (after first-run setup, if that's showing). It sits
     // over the clock and radar and steps aside for everything else.
-    if root.main-ui && root.tour-step > 0 && !root.link-active && !root.alert-active && !root.show-direction-selector: Tour {
+    if root.main-ui && root.tour-step > 0 && !root.link-active && !root.alert-active && !root.show-direction-selector && !root.detail-active: Tour {
         step: root.tour-step;
         skip => { root.tour-skipped(); }
     }

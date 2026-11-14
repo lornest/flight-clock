@@ -14,6 +14,7 @@ mod wifi;
 
 use config::{Config, Location};
 use flight::poller::{FlightState, NewFlightWithInfo, PollEvent, Poller};
+use flight::types::SlimFlight;
 use ipc::{FromWeb, ToWeb, WebLink};
 use utils::geo::{calculate_distance, calculate_plane_rotation, direction_to_degrees, polar_to_screen};
 use wifi::portal::PortalState;
@@ -46,6 +47,33 @@ const QR_PX: u32 = 205;
 const LINK_SHOWN: Duration = Duration::from_secs(3 * 60);
 /// First-run setup: the QR code stays up, but its token is replaced this often
 const LINK_ROTATE: Duration = Duration::from_secs(15 * 60);
+
+/// A tap this close to an aircraft on the radar (display pixels) opens its details
+const TAP_RADIUS_PX: f64 = 30.0;
+/// The details screen goes back to the radar by itself after this long...
+const DETAIL_OPEN_FOR: Duration = Duration::from_secs(5 * 60);
+/// ...or this long after the aircraft was last heard from
+const DETAIL_GIVE_UP_AFTER: Duration = Duration::from_secs(90);
+/// Not heard from for this long: say so on the screen
+const DETAIL_LOST_AFTER: Duration = Duration::from_secs(15);
+/// Where the aircraft's outline sits on the details screen, and how much
+/// larger than on the radar
+const DETAIL_ICON_AT: (f64, f64) = (240.0, 58.0);
+const DETAIL_ICON_TIMES: f64 = 1.5;
+
+/// Where each aircraft was last drawn on the radar, for working out which
+/// one was tapped: (x, y, the aircraft).
+type RadarHits = Arc<Mutex<Vec<(f64, f64, SlimFlight)>>>;
+
+/// The details screen while it is open. Only touched on the UI thread.
+#[derive(Clone, Copy)]
+struct DetailWatch {
+    opened: Instant,
+    /// When the aircraft was last heard from
+    heard: Instant,
+    /// It was already night hours when the screen was opened
+    night_at_open: bool,
+}
 
 /// Night mode "dim": how dark the picture goes (1.0 would be black)
 const NIGHT_DIM: f32 = 0.8;
@@ -149,6 +177,11 @@ fn main() {
     let poll_interval = Arc::new(AtomicU64::new(if start_on_radar { POLL_ACTIVE } else { POLL_IDLE }));
     let alert = Arc::new(Mutex::new(AlertState::default()));
     let trails = Arc::new(Mutex::new(Trails::new()));
+    // Details screen: which aircraft the poller should follow, where the
+    // radar last drew each aircraft, and when the screen should give up
+    let follow: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let radar_hits: RadarHits = Arc::new(Mutex::new(Vec::new()));
+    let detail_watch: Arc<Mutex<Option<DetailWatch>>> = Arc::new(Mutex::new(None));
 
     // --- Web server link ---
     // The settings page and WiFi setup portal run in their own unprivileged
@@ -292,9 +325,12 @@ fn main() {
         let network_ready = network_ready.clone();
         let location = location.clone();
         let prefs = prefs.clone();
+        let follow = follow.clone();
+        let radar_hits = radar_hits.clone();
+        let detail_watch = detail_watch.clone();
 
         std::thread::spawn(move || {
-            let poller = Poller::new(location.clone(), poll_interval.clone(), network_ready);
+            let poller = Poller::new(location.clone(), poll_interval.clone(), network_ready, follow.clone());
             poller.run(move |event| {
                 let facing = facing.lock().unwrap().clone();
                 // The poller only runs with a location set
@@ -304,6 +340,9 @@ fn main() {
                 let trails = trails.clone();
                 let poll_interval = poll_interval.clone();
                 let prefs = prefs.lock().unwrap().clone();
+                let follow = follow.clone();
+                let radar_hits = radar_hits.clone();
+                let detail_watch = detail_watch.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = ui_handle.upgrade() else { return };
                     match event {
@@ -315,8 +354,25 @@ fn main() {
                         PollEvent::Updated(state) => {
                             ui.set_radar_updating(false);
                             ui.set_radar_error("".into());
-                            update_radar(&ui, &state, &facing, location, &trails);
-                            update_alert(&ui, &state, &facing, location, &alert, &poll_interval, &prefs);
+                            update_radar(&ui, &state, &facing, location, &trails, &radar_hits);
+                            // No alerts over an aircraft's details. The
+                            // arrivals still count as seen, so they don't
+                            // all alert when the screen closes.
+                            if !ui.get_detail_active() {
+                                update_alert(&ui, &state, &facing, location, &alert, &poll_interval, &prefs);
+                            }
+                        }
+                        PollEvent::Followed { hex, flight } => {
+                            // Stale news of an aircraft no longer on screen
+                            if !ui.get_detail_active() || follow.lock().unwrap().as_deref() != Some(hex.as_str()) {
+                                return;
+                            }
+                            if let Some((slim, route)) = flight {
+                                if let Some(watch) = detail_watch.lock().unwrap().as_mut() {
+                                    watch.heard = Instant::now();
+                                }
+                                ui.set_detail(flight_detail(&slim, Some(&route), location, &facing));
+                            }
                         }
                     }
                 });
@@ -343,6 +399,8 @@ fn main() {
     let ui_handle_clock = ui.as_weak();
     let prefs_clock = prefs.clone();
     let wake_until_clock = wake_until.clone();
+    let follow_clock = follow.clone();
+    let detail_watch_clock = detail_watch.clone();
     ui.on_update_clock(move || {
         if let Some(ui) = ui_handle_clock.upgrade() {
             let now = chrono::Local::now();
@@ -352,6 +410,23 @@ fn main() {
 
             let time_known = time_synced.load(Ordering::Relaxed);
             ui.set_time_known(time_known);
+
+            // Details screen: back to the radar when it has been up long
+            // enough, the aircraft has gone quiet, or night hours begin
+            let watch = *detail_watch_clock.lock().unwrap();
+            if let (true, Some(watch)) = (ui.get_detail_active(), watch) {
+                let night = time_known && prefs_clock.lock().unwrap().is_night(h as u32 * 60 + m as u32);
+                if detail_should_close(watch.opened.elapsed(), watch.heard.elapsed(), night, watch.night_at_open) {
+                    close_detail(&ui, &follow_clock, &detail_watch_clock);
+                } else {
+                    let status = if watch.heard.elapsed() >= DETAIL_LOST_AFTER { "Signal lost" } else { "" };
+                    let mut detail = ui.get_detail();
+                    if detail.status != status {
+                        detail.status = status.into();
+                        ui.set_detail(detail);
+                    }
+                }
+            }
 
             // No night mode on a guess at the time
             let awake = Instant::now() < *wake_until_clock.lock().unwrap();
@@ -428,9 +503,47 @@ fn main() {
     let last_tap_x = Arc::new(Mutex::new(0.0f64));
     let last_tap_y = Arc::new(Mutex::new(0.0f64));
 
+    // A tap on the details screen: back to the radar
+    {
+        let ui_handle = ui.as_weak();
+        let follow = follow.clone();
+        let detail_watch = detail_watch.clone();
+        ui.on_detail_closed(move || {
+            if let Some(ui) = ui_handle.upgrade() {
+                close_detail(&ui, &follow, &detail_watch);
+            }
+        });
+    }
+
+    let tap_location = location.clone();
+    let tap_facing = facing_direction.clone();
+    let tap_prefs = prefs.clone();
     ui.on_screen_tapped(move |x, y| {
         let x = x as f64;
         let y = y as f64;
+
+        // On the radar, a tap on an aircraft opens its details
+        if let Some(ui) = ui_handle_tap.upgrade() {
+            if ui.get_current_screen() == 1 {
+                let tapped = aircraft_at(&radar_hits.lock().unwrap(), 240.0 + x, 240.0 + y).cloned();
+                if let (Some(flight), Some(loc)) = (tapped, *tap_location.lock().unwrap()) {
+                    let now = chrono::Local::now();
+                    let minute = chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now);
+                    *follow.lock().unwrap() = Some(flight.hex.clone());
+                    *detail_watch.lock().unwrap() = Some(DetailWatch {
+                        opened: Instant::now(),
+                        heard: Instant::now(),
+                        night_at_open: tap_prefs.lock().unwrap().is_night(minute),
+                    });
+                    // What the radar knows now; the route follows with the next poll
+                    ui.set_detail(flight_detail(&flight, None, loc, &tap_facing.lock().unwrap()));
+                    ui.set_detail_active(true);
+                    last_tap_time.store(0, Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -858,6 +971,7 @@ fn screen_in_use(ui: &App) -> bool {
         || ui.get_show_direction_selector()
         || ui.get_link_active()
         || ui.get_alert_active()
+        || ui.get_detail_active()
         || !ui.get_pairing_code().is_empty()
 }
 
@@ -1021,6 +1135,7 @@ fn update_radar(
     facing_direction: &str,
     loc: Location,
     trails: &Mutex<Trails>,
+    hits: &RadarHits,
 ) {
     let facing_deg = direction_to_degrees(facing_direction);
     let to_screen = |lat: f64, lon: f64| -> (f64, f64, f64) {
@@ -1040,6 +1155,7 @@ fn update_radar(
         .map(|f| (f, to_screen(f.lat, f.lon)))
         .filter(|(_, (_, _, d))| *d <= loc.max_radius_nm)
         .collect();
+    *hits.lock().unwrap() = in_range.iter().map(|(f, (x, y, _))| (*x, *y, (*f).clone())).collect();
     let closest = in_range
         .iter()
         .min_by(|a, b| a.1 .2.total_cmp(&b.1 .2))
@@ -1097,6 +1213,123 @@ fn heading_end(x: f64, y: f64, track: Option<f64>, facing_deg: f64) -> (f64, f64
         }
         None => (x, y),
     }
+}
+
+/// The aircraft drawn nearest to a tap at (x, y), if one is within reach of
+/// a fingertip.
+fn aircraft_at(hits: &[(f64, f64, SlimFlight)], x: f64, y: f64) -> Option<&SlimFlight> {
+    hits.iter()
+        .map(|(hx, hy, flight)| ((hx - x).hypot(hy - y), flight))
+        .filter(|(distance, _)| *distance <= TAP_RADIUS_PX)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, flight)| flight)
+}
+
+/// Should the details screen go back to the radar by itself? Yes once it has
+/// been up for its time, the aircraft has gone unheard too long, or night
+/// hours have begun since it was opened.
+fn detail_should_close(open_for: Duration, unheard_for: Duration, night: bool, night_at_open: bool) -> bool {
+    open_for >= DETAIL_OPEN_FOR || unheard_for >= DETAIL_GIVE_UP_AFTER || (night && !night_at_open)
+}
+
+fn close_detail(ui: &App, follow: &Mutex<Option<String>>, watch: &Mutex<Option<DetailWatch>>) {
+    *follow.lock().unwrap() = None;
+    *watch.lock().unwrap() = None;
+    ui.set_detail_active(false);
+}
+
+/// Everything the details screen shows about an aircraft, as text. `route`
+/// is None until the poller has had a chance to supply it.
+fn flight_detail(
+    flight: &SlimFlight,
+    route: Option<&NewFlightWithInfo>,
+    loc: Location,
+    facing_direction: &str,
+) -> FlightDetail {
+    let (route_text, has_route) = match route {
+        Some(r) if r.has_route => (format!("{} → {}", r.origin_location, r.destination_location), true),
+        Some(_) => ("ROUTE UNAVAILABLE".to_string(), false),
+        None => (String::new(), false),
+    };
+    let type_line = [flight.aircraft_type.as_deref(), flight.registration.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let distance = calculate_distance(loc.lat, loc.lon, flight.lat, flight.lon);
+    let bearing = utils::geo::calculate_bearing(loc.lat, loc.lon, flight.lat, flight.lon);
+    let heading = flight.track.map_or(0.0, |track| track - direction_to_degrees(facing_direction));
+
+    FlightDetail {
+        callsign: display_callsign(&flight.callsign, &flight.hex).into(),
+        icon: ui_paths::aircraft_sized(flight.kind, DETAIL_ICON_AT.0, DETAIL_ICON_AT.1, heading, DETAIL_ICON_TIMES).into(),
+        route: route_text.into(),
+        has_route,
+        type_line: type_line.into(),
+        description: flight.description.clone().unwrap_or_default().into(),
+        altitude: altitude_text(flight.alt_baro, flight.on_ground).into(),
+        vertical: if flight.on_ground { String::new() } else { vertical_text(flight.baro_rate) }.into(),
+        speed: flight.gs.map_or("—".to_string(), |gs| format!("{} kt", gs.round() as i64)).into(),
+        distance: distance_text(distance).into(),
+        direction: compass_point(bearing).into(),
+        status: "".into(),
+    }
+}
+
+/// "FL340" above the transition altitude, "2,500 ft" below it, "Ground" on
+/// the ground, "—" when the aircraft isn't reporting one.
+fn altitude_text(alt_baro: Option<i32>, on_ground: bool) -> String {
+    match alt_baro {
+        _ if on_ground => "Ground".to_string(),
+        Some(a) if a >= TRANSITION_ALTITUDE_FT => format!("FL{:03}", (a + 50) / 100),
+        Some(a) => format!("{} ft", with_commas(a.max(0))),
+        None => "—".to_string(),
+    }
+}
+
+/// "↑ 900 fpm" climbing, "↓ 1,200 fpm" descending (to the nearest 100),
+/// "level" within 150 fpm of level, nothing when unknown.
+fn vertical_text(baro_rate: Option<i32>) -> String {
+    match baro_rate {
+        None => String::new(),
+        Some(rate) if rate.abs() < 150 => "level".to_string(),
+        Some(rate) => {
+            let rounded = ((rate.abs() + 50) / 100) * 100;
+            format!("{} {} fpm", if rate > 0 { "↑" } else { "↓" }, with_commas(rounded))
+        }
+    }
+}
+
+/// "4.2 NM" close by, "42 NM" from 10 NM out.
+fn distance_text(nm: f64) -> String {
+    if nm < 10.0 {
+        format!("{:.1} NM", nm)
+    } else {
+        format!("{} NM", nm.round() as i64)
+    }
+}
+
+/// The nearest of the eight compass points to a bearing in degrees.
+fn compass_point(bearing: f64) -> &'static str {
+    const POINTS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    POINTS[((bearing.rem_euclid(360.0) + 22.5) / 45.0) as usize % 8]
+}
+
+/// 12345 -> "12,345"
+fn with_commas(n: i32) -> String {
+    let digits = n.abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 {
+        out.insert(0, '-');
+    }
+    out
 }
 
 /// Ring round the closest aircraft when it is drawn as an icon (the largest
@@ -1298,6 +1531,9 @@ mod tests {
             baro_rate: None,
             aircraft_type: None,
             kind: flight::types::AircraftKind::Unknown,
+            registration: None,
+            description: None,
+            on_ground: false,
         }
     }
 
@@ -1341,6 +1577,112 @@ mod tests {
         // Network time switched off: the owner sets the time some other way
         assert!(synced_per_timedatectl("NTP=no\nNTPSynchronized=no\n"));
         assert!(synced_per_timedatectl(""));
+    }
+
+    #[test]
+    fn a_tap_finds_the_nearest_aircraft_within_reach() {
+        let hits = vec![
+            (100.0, 100.0, flight("near", None)),
+            (120.0, 100.0, flight("nearer", None)),
+            (400.0, 400.0, flight("far", None)),
+        ];
+        assert_eq!(aircraft_at(&hits, 118.0, 104.0).map(|f| f.hex.as_str()), Some("nearer"));
+        assert_eq!(aircraft_at(&hits, 96.0, 100.0).map(|f| f.hex.as_str()), Some("near"));
+        // Just inside and just outside a fingertip's reach
+        assert!(aircraft_at(&hits, 400.0, 400.0 + TAP_RADIUS_PX - 1.0).is_some());
+        assert!(aircraft_at(&hits, 400.0, 400.0 + TAP_RADIUS_PX + 1.0).is_none());
+        assert!(aircraft_at(&hits, 250.0, 250.0).is_none());
+        assert!(aircraft_at(&[], 100.0, 100.0).is_none());
+    }
+
+    #[test]
+    fn details_screen_gives_up_in_time() {
+        let s = Duration::from_secs;
+        assert!(!detail_should_close(s(10), s(2), false, false));
+        // Up for five minutes
+        assert!(!detail_should_close(DETAIL_OPEN_FOR - s(1), s(0), false, false));
+        assert!(detail_should_close(DETAIL_OPEN_FOR, s(0), false, false));
+        // The aircraft has gone quiet
+        assert!(!detail_should_close(s(60), DETAIL_GIVE_UP_AFTER - s(1), false, false));
+        assert!(detail_should_close(s(60), DETAIL_GIVE_UP_AFTER, false, false));
+        // Night hours begin; opened during them, it gets its five minutes
+        assert!(detail_should_close(s(10), s(0), true, false));
+        assert!(!detail_should_close(s(10), s(0), true, true));
+        // "Signal lost" shows well before giving up
+        assert!(DETAIL_LOST_AFTER < DETAIL_GIVE_UP_AFTER);
+    }
+
+    #[test]
+    fn details_read_naturally() {
+        assert_eq!(altitude_text(Some(34_000), false), "FL340");
+        assert_eq!(altitude_text(Some(2_500), false), "2,500 ft");
+        assert_eq!(altitude_text(Some(-40), false), "0 ft");
+        assert_eq!(altitude_text(None, true), "Ground");
+        assert_eq!(altitude_text(None, false), "—");
+
+        assert_eq!(vertical_text(Some(-896)), "↓ 900 fpm");
+        assert_eq!(vertical_text(Some(1_240)), "↑ 1,200 fpm");
+        assert_eq!(vertical_text(Some(64)), "level");
+        assert_eq!(vertical_text(None), "");
+
+        assert_eq!(distance_text(4.23), "4.2 NM");
+        assert_eq!(distance_text(41.6), "42 NM");
+
+        for (bearing, point) in [(0.0, "N"), (22.0, "N"), (23.0, "NE"), (90.0, "E"), (200.0, "S"), (315.0, "NW"), (350.0, "N"), (-10.0, "N"), (360.0, "N")] {
+            assert_eq!(compass_point(bearing), point, "{}", bearing);
+        }
+        assert_eq!(with_commas(0), "0");
+        assert_eq!(with_commas(999), "999");
+        assert_eq!(with_commas(1_000), "1,000");
+        assert_eq!(with_commas(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn detail_text_for_an_aircraft() {
+        let loc = Location { lat: 51.47, lon: -0.4543, max_radius_nm: 6.0 };
+        let mut plane = flight("4840d6", Some(8_075));
+        plane.callsign = "KLC23R".into();
+        plane.lat = 51.47 + 0.2; // 12 NM north
+        plane.lon = -0.4543;
+        plane.gs = Some(272.1);
+        plane.baro_rate = Some(-896);
+        plane.track = Some(256.0);
+        plane.aircraft_type = Some("E75L".into());
+        plane.registration = Some("PH-EXN".into());
+        plane.kind = flight::types::AircraftKind::Large;
+
+        // Before the poller has supplied the route
+        let d = flight_detail(&plane, None, loc, "N");
+        assert_eq!(d.callsign, "KLC23R");
+        assert_eq!(d.type_line, "E75L · PH-EXN");
+        assert_eq!((d.altitude.as_str(), d.vertical.as_str(), d.speed.as_str()), ("FL081", "↓ 900 fpm", "272 kt"));
+        assert_eq!((d.distance.as_str(), d.direction.as_str()), ("12 NM", "N"));
+        assert!(d.route.is_empty() && !d.has_route);
+        assert!(!d.icon.is_empty());
+        assert!(d.status.is_empty());
+
+        // With a route, and without one being found
+        let mut route = NewFlightWithInfo::from_parts("4840d6", &plane, None);
+        assert_eq!(flight_detail(&plane, Some(&route), loc, "N").route, "ROUTE UNAVAILABLE");
+        route.has_route = true;
+        route.origin_location = "Amsterdam".into();
+        route.destination_location = "London".into();
+        let d = flight_detail(&plane, Some(&route), loc, "N");
+        assert_eq!(d.route, "Amsterdam → London");
+        assert!(d.has_route);
+
+        // No callsign, registration or speed: the address and dashes
+        let bare = flight("abc123", None);
+        let d = flight_detail(&bare, None, loc, "N");
+        assert_eq!((d.callsign.as_str(), d.type_line.as_str(), d.speed.as_str()), ("ABC123", "", "—"));
+        assert!(d.icon.is_empty());
+
+        // On the ground: no climb rate shown
+        let mut parked = flight("abc123", None);
+        parked.on_ground = true;
+        parked.baro_rate = Some(-600);
+        let d = flight_detail(&parked, None, loc, "N");
+        assert_eq!((d.altitude.as_str(), d.vertical.as_str()), ("Ground", ""));
     }
 
     #[test]

@@ -113,6 +113,11 @@ impl FlightTracker {
         self.flight_info.get(hex_code)
     }
 
+    /// Is this aircraft in the area as of the last update?
+    pub fn has_flight(&self, hex_code: &str) -> bool {
+        self.current_flights.contains_key(hex_code)
+    }
+
     /// Get the number of currently tracked flights.
     pub fn flight_count(&self) -> usize {
         self.current_flights.len()

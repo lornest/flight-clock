@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { Line, Ring } from "shapes.slint";
+import { Line, Ring, Shape } from "shapes.slint";
 
 // An aircraft on the alert screen. Absolute display coordinates.
 export struct AlertBeacon {
@@ -10,6 +10,9 @@ export struct AlertBeacon {
     // End of the heading line (same as x/y when the track is unknown)
     hx: float,
     hy: float,
+    // Aircraft outline turned to its track, as on the radar; empty when the
+    // size class or track isn't known
+    icon: string,
     is-new: bool,
 }
 
@@ -52,7 +55,7 @@ export component Alert inherits Rectangle {
 
     // Aircraft
     for b in root.beacons: Rectangle {
-        if b.hx != b.x || b.hy != b.y: Line {
+        if b.icon == "" && (b.hx != b.x || b.hy != b.y): Line {
             x1: b.x;
             y1: b.y;
             x2: b.hx;
@@ -60,7 +63,11 @@ export component Alert inherits Rectangle {
             stroke: b.is-new ? Theme.accent : Theme.fg-soft;
             stroke-width: 1.5px;
         }
-        Rectangle {
+        if b.icon != "": Shape {
+            commands: b.icon;
+            fill: b.is-new ? Theme.accent : Theme.fg-soft;
+        }
+        if b.icon == "": Rectangle {
             x: (b.x - 5) * 1px;
             y: (b.y - 5) * 1px;
             width: 10px;
@@ -69,7 +76,7 @@ export component Alert inherits Rectangle {
         }
         if b.callsign != "": Text {
             x: (b.x - 60) * 1px;
-            y: (b.y + 9) * 1px;
+            y: (b.y + (b.icon != "" ? 19 : 9)) * 1px;
             width: 120px;
             text: b.callsign;
             font-family: Theme.font-mono;

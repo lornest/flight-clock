@@ -69,6 +69,7 @@ back to the previous one.
 cargo test
 SLINT_BACKEND=winit-software cargo run          # clock window on your computer
 FLIGHT_CLOCK_SCREEN=radar ...                   # start on the radar
+FLIGHT_CLOCK_ADSB_URL=http://localhost:8099 ... # made-up aircraft: run scripts/demo-feed.py first
 FLIGHT_CLOCK_CONFIG=/tmp/fc.json ...            # use a local config file
 ```
 The settings page runs on `http://localhost:8080` locally.

@@ -1,0 +1,160 @@
+import { Theme } from "theme.slint";
+import { Ring, Shape } from "shapes.slint";
+
+// Everything shown about one aircraft, as text ready to display
+// (formatted in src/main.rs).
+export struct FlightDetail {
+    callsign: string,
+    // Outline turned to its track, centred near the top; empty if unknown
+    icon: string,
+    // "Amsterdam → Edinburgh", or a note such as "Route unavailable"
+    route: string,
+    has-route: bool,
+    // "E75L · PH-EXN" and "EMBRAER ERJ-170-200"
+    type-line: string,
+    description: string,
+    // "FL340" / "2,500 ft" / "Ground", and "↓ 900 fpm" / "level"
+    altitude: string,
+    vertical: string,
+    // "272 kt"
+    speed: string,
+    // "12 NM" and "NE": how far away and which way from the clock
+    distance: string,
+    direction: string,
+    // "" normally; "Signal lost" while the aircraft can't be heard
+    status: string,
+}
+
+// One figure with its label above and a note below.
+component Figure inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> note;
+    width: 130px;
+    height: 86px;
+    Text {
+        y: 0;
+        width: parent.width;
+        text: root.label;
+        font-family: Theme.font-mono;
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 2px;
+        color: Theme.fg-dim;
+        horizontal-alignment: center;
+    }
+    Text {
+        y: 22px;
+        width: parent.width;
+        text: root.value;
+        font-family: Theme.font-display;
+        font-size: 28px;
+        font-weight: 600;
+        color: Theme.fg;
+        horizontal-alignment: center;
+    }
+    Text {
+        y: 62px;
+        width: parent.width;
+        text: root.note;
+        font-family: Theme.font-mono;
+        font-size: 16px;
+        font-weight: 500;
+        color: Theme.accent;
+        horizontal-alignment: center;
+    }
+}
+
+// One aircraft, full screen: opened by tapping it on the radar, closed by a
+// tap anywhere. It keeps updating after the aircraft has left the radar.
+export component Detail inherits Rectangle {
+    width: Theme.display-size;
+    height: Theme.display-size;
+    background: Theme.bg;
+
+    in property <FlightDetail> flight;
+    callback close();
+
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    Ring { r: 236px; border-width: 2px; border-color: Theme.accent-soft; }
+
+    Shape {
+        commands: root.flight.icon;
+        fill: Theme.accent;
+    }
+
+    Text {
+        y: 96px;
+        width: root.width;
+        text: root.flight.callsign;
+        font-family: Theme.font-display;
+        font-size: 44px;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+        color: Theme.fg;
+        horizontal-alignment: center;
+    }
+
+    Text {
+        x: 50px;
+        y: 160px;
+        width: 380px;
+        text: root.flight.route;
+        font-family: root.flight.has-route ? Theme.font-display : Theme.font-mono;
+        font-size: root.flight.has-route ? 26px : 16px;
+        font-weight: 500;
+        color: root.flight.has-route ? Theme.fg : Theme.fg-faint;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+
+    Text {
+        x: 40px;
+        y: 202px;
+        width: 400px;
+        text: root.flight.type-line;
+        font-family: Theme.font-mono;
+        font-size: 20px;
+        font-weight: 500;
+        color: Theme.fg-soft;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: 50px;
+        y: 232px;
+        width: 380px;
+        text: root.flight.description;
+        font-family: Theme.font-mono;
+        font-size: 15px;
+        color: Theme.fg-dim;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: 60px;
+        y: 262px;
+        width: 360px;
+        height: 1px;
+        background: Theme.line;
+    }
+
+    Figure { x: 45px; y: 276px; label: "ALT"; value: root.flight.altitude; note: root.flight.vertical; }
+    Figure { x: 175px; y: 276px; label: "SPEED"; value: root.flight.speed; }
+    Figure { x: 305px; y: 276px; label: "AWAY"; value: root.flight.distance; note: root.flight.direction; }
+
+    Text {
+        y: 380px;
+        width: root.width;
+        text: root.flight.status;
+        font-family: Theme.font-mono;
+        font-size: 18px;
+        font-weight: 500;
+        color: Theme.error;
+        horizontal-alignment: center;
+    }
+}

@@ -5,6 +5,19 @@ section here becomes its GitHub release notes.
 
 ## [0.3.1] - 2026-11-13
 
+### Added
+- Tap an aircraft on the radar for its details, full screen: callsign,
+  route, type and registration, altitude with climb or descent rate, speed,
+  and how far away it is and in which direction. It keeps updating after
+  the aircraft has left the radar. A tap anywhere goes back; it also goes
+  back by itself after five minutes, 90 seconds after the aircraft can no
+  longer be heard, or when night hours begin. No alerts while it's open.
+- Aircraft on the radar and alerts are drawn by size: light aircraft, small
+  jets and turboprops, airliners, wide-bodies and helicopters each have their
+  own outline, pointing the way they're flying. The size comes from the
+  flight data the clock already fetches. Aircraft that don't report one keep
+  the square marker.
+
 ### Security
 - The clock's own service is now sandboxed too: read-only system folders, no
   access to home folders, no mounting, module loading or clock setting, and

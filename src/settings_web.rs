@@ -269,6 +269,16 @@ impl SettingsWeb {
                 }
             }
 
+            // Polled by the settings page so the Updates card keeps up with
+            // the updater without a reload
+            ("GET", "/update/status") => {
+                if !self.is_authed(&request) {
+                    let _ = request.respond(Response::from_string("Not paired").with_status_code(403));
+                    return;
+                }
+                respond_json(request, update_status_json(update::read_status().as_ref()));
+            }
+
             ("POST", "/update/check") | ("POST", "/update/install") => {
                 if !self.is_authed(&request) {
                     return redirect(request, "/");
@@ -276,7 +286,7 @@ impl SettingsWeb {
                 let install = path == "/update/install";
                 let banner = match self.clock.trigger_update(install) {
                     Ok(()) if install => Banner::Info(
-                        "Updating. The clock restarts when it's done; this page will show the result.".into(),
+                        "Updating. The clock restarts when it's done, which takes a few minutes; the result will show under Updates.".into(),
                     ),
                     Ok(()) => Banner::Info("Checking for updates...".into()),
                     Err(e) => Banner::Error(format!("Couldn't start the updater: {}", e)),
@@ -701,13 +711,21 @@ fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, Str
 }
 
 fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
+    let status = update::read_status();
+    // After "Check now" or "Update now", look for the result often for a while
+    let watch = matches!(banner, Some(Banner::Info(_)));
     let banner = match banner {
         Some(Banner::Saved) => r#"<p class="banner ok">Saved. The clock has updated.</p>"#.to_string(),
         Some(Banner::Info(msg)) => format!(r#"<p class="banner info">{}</p>"#, html_escape(&msg)),
         Some(Banner::Error(msg)) => format!(r#"<p class="banner error">{}</p>"#, html_escape(&msg)),
         None => String::new(),
     };
-    let updates = render_updates(cfg);
+    let updates = format!(
+        r#"<div id="update-status" data-busy="{busy}" data-watch="{watch}">{html}</div>"#,
+        busy = update_busy(status.as_ref()) as u8,
+        watch = watch as u8,
+        html = render_update_status(status.as_ref()),
+    );
 
     let face_checked = |f: &str| if cfg.clock_face == f { " checked" } else { "" };
 
@@ -820,6 +838,7 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
 <form method="POST" action="/forget"><button type="submit" class="link">Unpair this phone</button></form>
 <form method="POST" action="/forget-all" data-confirm="Unpair every phone, including this one? Each will need a new code from the clock."><button type="submit" class="link">Unpair all phones</button></form>
 <script>{place_script}</script>
+<script>{update_script}</script>
 <script>
 (function () {{
   // Preview a colour on this page straight away; Save applies it to the clock
@@ -858,11 +877,12 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         stable = if cfg.update_channel != "beta" { " checked" } else { "" },
         beta = if cfg.update_channel == "beta" { " checked" } else { "" },
         auto = if cfg.auto_update { " checked" } else { "" },
-        update_now = if update::read_status().is_some_and(|s| s.state == "available" || s.state == "failed") {
-            r#"<form method="POST" action="/update/install"><button type="submit" class="primary">Update now</button></form>"#
-        } else {
-            ""
-        },
+        // Always on the page, shown when there is something to install
+        update_now = format!(
+            r#"<form method="POST" action="/update/install" id="update-now"{hidden}><button type="submit" class="primary">Update now</button></form>"#,
+            hidden = if can_install(status.as_ref()) { "" } else { " hidden" }
+        ),
+        update_script = UPDATE_SCRIPT,
     );
 
     page("Settings", &body, cfg)
@@ -1018,9 +1038,9 @@ fn render_setup(cfg: &Config, error: Option<&str>) -> String {
 }
 
 /// Version and last update result, for the Updates card.
-fn render_updates(_cfg: &Config) -> String {
+fn render_update_status(status: Option<&update::UpdateStatus>) -> String {
     let version = format!("<b>FlightClock {}</b>", html_escape(update::VERSION));
-    let Some(status) = update::read_status() else {
+    let Some(status) = status else {
         return format!(r#"<p class="status">{} · <span class="hint">not checked yet</span></p>"#, version);
     };
     let when = ago(status.checked_at);
@@ -1041,6 +1061,56 @@ fn render_updates(_cfg: &Config) -> String {
     };
     format!(r#"<p class="status">{}<br>{}{}</p>"#, version, line, message)
 }
+
+/// The updater is at work: the page should look again soon.
+fn update_busy(status: Option<&update::UpdateStatus>) -> bool {
+    status.is_some_and(|s| s.state == "checking" || s.state == "installing")
+}
+
+/// There is a release to install (or to try again): show "Update now".
+fn can_install(status: Option<&update::UpdateStatus>) -> bool {
+    status.is_some_and(|s| s.state == "available" || s.state == "failed")
+}
+
+/// What the settings page polls: the Updates card's contents, already
+/// escaped HTML, and what to do with it.
+fn update_status_json(status: Option<&update::UpdateStatus>) -> String {
+    serde_json::json!({
+        "html": render_update_status(status),
+        "busy": update_busy(status),
+        "can_install": can_install(status),
+    })
+    .to_string()
+}
+
+/// Keeps the Updates card current. Every 3 s while the updater is working
+/// or for 4 minutes after "Check now" / "Update now"; every 30 s otherwise.
+/// A failed request (the clock restarts during an update) is tried again.
+/// The page shell swaps in whole new pages after a form post; the old page's
+/// loop notices its card has gone and stops.
+const UPDATE_SCRIPT: &str = r#"
+(function () {
+  var box = document.getElementById('update-status');
+  var installButton = document.getElementById('update-now');
+  if (!box || !window.fetch) return;
+  var busy = box.dataset.busy === '1';
+  var watchUntil = box.dataset.watch === '1' ? Date.now() + 240000 : 0;
+  function soon() { return busy || Date.now() < watchUntil; }
+  function poll() {
+    if (!document.body.contains(box)) return;
+    fetch('/update/status', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(function (s) {
+        box.innerHTML = s.html;
+        busy = s.busy;
+        if (installButton) installButton.hidden = !s.can_install;
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(poll, soon() ? 3000 : 30000); });
+  }
+  setTimeout(poll, soon() ? 2000 : 30000);
+})();
+"#;
 
 fn ago(unix_secs: u64) -> String {
     let now = std::time::SystemTime::now()
@@ -1096,6 +1166,7 @@ header{{text-align:center;margin:8px 0 24px}}
 .row{{display:flex;gap:10px;align-items:flex-end}}.row>*{{flex:1;min-width:0}}
 .field{{display:flex;flex-direction:column;gap:6px}}
 input:not([type=radio]):not([type=checkbox]),select{{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font:inherit;font-size:16px;color-scheme:dark}}
+[hidden]{{display:none!important}}
 .segmented.three{{grid-template-columns:repeat(3,1fr)}}
 input:focus{{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}}
 .intro{{margin-bottom:16px;text-align:center}}
@@ -1185,6 +1256,12 @@ fn respond_html(request: Request, html: String) {
     let ct = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
     let nocache = Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap();
     let _ = request.respond(Response::from_string(html).with_header(ct).with_header(nocache));
+}
+
+pub(crate) fn respond_json(request: Request, json: String) {
+    let ct = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+    let nocache = Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..]).unwrap();
+    let _ = request.respond(Response::from_string(json).with_header(ct).with_header(nocache));
 }
 
 pub(crate) fn respond_font(request: Request, bytes: &'static [u8]) {
@@ -1677,5 +1754,72 @@ mod tests {
         assert!(html.contains(r#"<option value="5" selected>5 minutes</option>"#));
         assert!(html.contains(r#"name="alert_max_altitude_ft" type="number" inputmode="numeric" min="500" max="60000" step="500" value="8000""#));
         assert!(html.contains(r#"name="night_start" type="time" value="22:00""#));
+    }
+
+    fn status(state: &str) -> update::UpdateStatus {
+        update::UpdateStatus {
+            state: state.into(),
+            current: "0.3.0".into(),
+            latest: Some("0.3.1".into()),
+            message: String::new(),
+            checked_at: 0,
+        }
+    }
+
+    #[test]
+    fn update_status_says_when_to_look_again_and_what_to_offer() {
+        for (state, busy, install) in [
+            ("checking", true, false),
+            ("installing", true, false),
+            ("available", false, true),
+            ("failed", false, true),
+            ("up_to_date", false, false),
+            ("updated", false, false),
+        ] {
+            let s = status(state);
+            assert_eq!(update_busy(Some(&s)), busy, "{}", state);
+            assert_eq!(can_install(Some(&s)), install, "{}", state);
+        }
+        assert!(!update_busy(None) && !can_install(None));
+    }
+
+    #[test]
+    fn update_status_json_carries_the_card() {
+        let json: serde_json::Value = serde_json::from_str(&update_status_json(Some(&status("installing")))).unwrap();
+        assert_eq!(json["busy"], true);
+        assert_eq!(json["can_install"], false);
+        assert!(json["html"].as_str().unwrap().contains("Installing 0.3.1"));
+
+        let json: serde_json::Value = serde_json::from_str(&update_status_json(None)).unwrap();
+        assert_eq!(json["busy"], false);
+        assert!(json["html"].as_str().unwrap().contains("not checked yet"));
+    }
+
+    #[test]
+    fn update_status_escapes_what_the_updater_wrote() {
+        let mut s = status("failed");
+        s.message = "<script>alert(1)</script>".into();
+        s.latest = Some("<b>x".into());
+        let html = render_update_status(Some(&s));
+        assert!(!html.contains("<script>") && html.contains("&lt;script&gt;"));
+        let odd = render_update_status(Some(&status("<i>odd")));
+        assert!(odd.contains("&lt;i&gt;odd"));
+    }
+
+    #[test]
+    fn settings_page_polls_for_update_status() {
+        let html = render_settings(&Config::default(), None);
+        assert!(html.contains(r#"<div id="update-status" data-busy="0" data-watch="0">"#));
+        assert!(html.contains("/update/status"));
+        // "Update now" is on the page either way; hidden unless there's something to install
+        assert!(html.contains(r#"id="update-now""#));
+        assert!(!UPDATE_SCRIPT.contains("{{"));
+
+        // Just pressed "Check now": look often
+        let html = render_settings(&Config::default(), Some(Banner::Info("Checking for updates...".into())));
+        assert!(html.contains(r#"data-watch="1""#));
+        // An ordinary save doesn't
+        let html = render_settings(&Config::default(), Some(Banner::Saved));
+        assert!(html.contains(r#"data-watch="0""#));
     }
 }

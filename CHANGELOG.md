@@ -3,6 +3,18 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
+## [0.3.1] - 2026-11-13
+
+### Security
+- The clock's own service is now sandboxed too: read-only system folders, no
+  access to home folders, no mounting, module loading or clock setting, and
+  a short list of the root powers it keeps. It still runs as root, which the
+  display, WiFi and updates need.
+
+### Changed
+- The Updates card on the settings page keeps itself up to date: "Check now"
+  and "Update now" show their result without reloading the page.
+
 ## [0.3.0] - 2026-11-12
 
 ### Security

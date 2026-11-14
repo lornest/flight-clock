@@ -54,7 +54,7 @@ export component App inherits Window {
     in property <string> time-text: "";
     // False until the system clock has been set from the network
     in property <bool> time-known: true;
-    // Clock face: "analog" or "digital"
+    // Clock face id (see CLOCK_FACES in src/config.rs): "analog" or "digital"
     in property <string> clock-face: "analog";
     in property <bool> show-date: true;
     // Digital face paths (progress arc and orbiting plane)
@@ -99,8 +99,8 @@ export component App inherits Window {
     callback update-clock();
     callback wifi-setup-requested();
     callback wifi-setup-cancelled();
-    // Held the FlightClock logo: switch analog <-> digital
-    callback clock-face-toggle-requested();
+    // Swiped up (1: next face) or down (-1: previous face) on the clock
+    callback face-swiped(int);
     // DATE button on the settings screen
     callback show-date-toggled();
     // Pairing code dismissed on the clock
@@ -142,16 +142,24 @@ export component App inherits Window {
     // Clock screen
     property <bool> clock-visible: root.main-ui && root.current-screen == 0 && !root.alert-active;
 
-    // Swipe left for the radar, right for the clock. Taps and double-taps
-    // still reach the screens inside.
+    // Swipe left and right to move between screens (clock, radar), up and
+    // down on the clock to change its face. Taps and double-taps still reach
+    // the screens inside.
     SwipeGestureHandler {
         width: root.width;
         height: root.height;
         enabled: root.main-ui && !root.alert-active && !root.show-direction-selector;
         handle-swipe-left: root.current-screen == 0;
         handle-swipe-right: root.current-screen == 1;
+        handle-swipe-up: root.current-screen == 0;
+        handle-swipe-down: root.current-screen == 0;
         swiped => {
-            root.screen-swiped(self.current-position.x < self.pressed-position.x ? 1 : 0);
+            // Whichever way the finger travelled further
+            if abs((self.current-position.x - self.pressed-position.x) / 1px) >= abs((self.current-position.y - self.pressed-position.y) / 1px) {
+                root.screen-swiped(self.current-position.x < self.pressed-position.x ? 1 : 0);
+            } else {
+                root.face-swiped(self.current-position.y < self.pressed-position.y ? 1 : -1);
+            }
         }
 
     if root.clock-visible && root.clock-face != "digital": Clock {
@@ -216,31 +224,6 @@ export component App inherits Window {
         close => { root.direction-selector-closed(); }
         wifi-settings => { root.wifi-setup-requested(); }
         pair-phone => { root.pair-phone-requested(); }
-    }
-
-    // Hold the FlightClock logo (~0.7s) to switch clock face. Sits above the
-    // double-tap area, so taps on the logo itself don't count as screen taps.
-    property <bool> logo-held: false;
-    if root.clock-visible && !root.show-direction-selector: TouchArea {
-        x: 150px;
-        y: 104px;
-        width: 180px;
-        height: 60px;
-        pointer-event(event) => {
-            if event.kind == PointerEventKind.down {
-                root.logo-held = true;
-            } else if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
-                root.logo-held = false;
-            }
-        }
-    }
-    Timer {
-        interval: 700ms;
-        running: root.logo-held;
-        triggered => {
-            root.logo-held = false;
-            root.clock-face-toggle-requested();
-        }
     }
 
     // QR code for a phone (over the clock; under a pairing code)

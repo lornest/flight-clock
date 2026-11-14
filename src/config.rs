@@ -8,6 +8,19 @@ pub const FACINGS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 pub const RADIUS_MIN_NM: f64 = 1.0;
 pub const RADIUS_MAX_NM: f64 = 25.0;
 
+/// Clock faces, in the order swiping up on the clock goes through them. The
+/// first is the default. A new face is added here and in ui/main.slint; the
+/// settings page doesn't list them.
+pub const CLOCK_FACES: [&str; 2] = ["analog", "digital"];
+
+/// The face after `current` (`step` 1) or before it (-1), going round. An
+/// unknown id counts as the first face.
+pub fn next_clock_face(current: &str, step: i32) -> &'static str {
+    let count = CLOCK_FACES.len() as i32;
+    let at = CLOCK_FACES.iter().position(|f| *f == current).unwrap_or(0) as i32;
+    CLOCK_FACES[(at + step).rem_euclid(count) as usize]
+}
+
 /// Night modes: (config id, name). "dim" darkens the picture; "screen_off"
 /// also switches the backlight off (the display's backlight is on/off only).
 pub const NIGHT_MODES: [(&str, &str); 3] = [("off", "Off"), ("dim", "Dim"), ("screen_off", "Screen off")];
@@ -59,7 +72,7 @@ pub struct Config {
     pub radius_nm: f64,
     #[serde(default = "default_facing_direction")]
     pub facing_direction: String,
-    /// "analog" or "digital"; switched by holding the FlightClock logo
+    /// Face id from `CLOCK_FACES`; changed by swiping up or down on the clock
     #[serde(default = "default_clock_face")]
     pub clock_face: String,
     /// Date panel on the clock faces; toggled from the settings screen
@@ -227,7 +240,7 @@ impl Config {
         if !FACINGS.contains(&self.facing_direction.as_str()) {
             return Err("Pick a facing direction.".into());
         }
-        if self.clock_face != "analog" && self.clock_face != "digital" {
+        if !CLOCK_FACES.contains(&self.clock_face.as_str()) {
             return Err("Pick a clock face.".into());
         }
         if self.update_channel != "stable" && self.update_channel != "beta" {
@@ -408,6 +421,28 @@ mod accent_tests {
         let cfg = Config { setup_dismissed: true, ..Config::default() };
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(serde_json::from_str::<Config>(&json).unwrap().setup_dismissed);
+    }
+
+    #[test]
+    fn swiping_goes_round_the_clock_faces() {
+        let first = CLOCK_FACES[0];
+        let last = CLOCK_FACES[CLOCK_FACES.len() - 1];
+        assert_eq!(next_clock_face(first, 1), CLOCK_FACES[1]);
+        assert_eq!(next_clock_face(last, 1), first);
+        assert_eq!(next_clock_face(first, -1), last);
+        // All the way round, either way, comes back
+        let mut face = first;
+        for _ in 0..CLOCK_FACES.len() {
+            face = next_clock_face(face, 1);
+        }
+        assert_eq!(face, first);
+        for _ in 0..CLOCK_FACES.len() {
+            face = next_clock_face(face, -1);
+        }
+        assert_eq!(face, first);
+        // An id this version doesn't know starts from the first face
+        assert_eq!(next_clock_face("sundial", 1), CLOCK_FACES[1]);
+        assert_eq!(default_clock_face(), first);
     }
 
     #[test]

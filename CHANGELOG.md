@@ -12,6 +12,9 @@ section here becomes its GitHub release notes.
   display, WiFi and updates need.
 
 ### Changed
+- Swipe up or down on the clock to change its face, in place of holding the
+  logo. The guided tour teaches the new gesture, and the face choice is no
+  longer on the settings page.
 - The Updates card on the settings page keeps itself up to date: "Check now"
   and "Update now" show their result without reloading the page.
 

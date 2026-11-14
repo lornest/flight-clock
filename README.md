@@ -47,7 +47,7 @@ skip the display setup (e.g. `... | sudo CHANNEL=beta bash`).
   **Pair a phone**, a QR code that opens the settings page on your phone.
 - **Swipe** (or double-tap left/right): clock / radar.
 - **Tap an alert** to dismiss it.
-- **Hold the FlightClock logo**: switch analogue / digital.
+- **Swipe up or down** on the clock: change the clock face.
 - **Settings page**: everything above plus location, radar radius, colours,
   updates, alerts (off, only below an altitude, at most one every few
   minutes) and night hours (dim the screen or switch it off, with or without

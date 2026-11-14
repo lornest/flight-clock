@@ -45,8 +45,12 @@ pub fn plane_scaled(cx: f64, cy: f64, heading_deg: f64, scale: f64) -> String {
 }
 
 // Radar and alert icons, one per `AircraftKind`. All nose up, centred on
-// (0, 0), in display pixels at scale 1. Sizes step up with the aircraft:
-// about 16 across for a light aircraft to 29 for a wide-body.
+// (0, 0). Sizes step up with the aircraft: drawn at `ICON_SCALE`, about 20
+// display pixels across for a light aircraft to 36 for a wide-body.
+
+/// How much larger than their outlines below the icons are drawn. One number
+/// to make every icon bigger or smaller together.
+pub const ICON_SCALE: f64 = 1.25;
 
 /// Light aircraft: straight high wing, short nose.
 const LIGHT: Outline = &[
@@ -163,11 +167,11 @@ const ROTOR: Outline = &[
 /// the plain marker instead.
 pub fn aircraft(kind: AircraftKind, cx: f64, cy: f64, heading_deg: f64) -> String {
     match kind {
-        AircraftKind::Light => outline(LIGHT, cx, cy, heading_deg, 1.0),
-        AircraftKind::Small => outline(SMALL, cx, cy, heading_deg, 1.0),
-        AircraftKind::Large => outline(PLANE, cx, cy, heading_deg, LARGE_SCALE),
-        AircraftKind::Heavy => outline(HEAVY, cx, cy, heading_deg, 1.0),
-        AircraftKind::Rotor => outline(ROTOR, cx, cy, heading_deg, 1.0),
+        AircraftKind::Light => outline(LIGHT, cx, cy, heading_deg, ICON_SCALE),
+        AircraftKind::Small => outline(SMALL, cx, cy, heading_deg, ICON_SCALE),
+        AircraftKind::Large => outline(PLANE, cx, cy, heading_deg, LARGE_SCALE * ICON_SCALE),
+        AircraftKind::Heavy => outline(HEAVY, cx, cy, heading_deg, ICON_SCALE),
+        AircraftKind::Rotor => outline(ROTOR, cx, cy, heading_deg, ICON_SCALE),
         AircraftKind::Unknown => String::new(),
     }
 }
@@ -270,7 +274,7 @@ mod tests {
         // Readable but not sprawling on a 480 px radar
         for kind in [Light, Small, Large, Heavy, Rotor] {
             let (w, h) = size(&aircraft(kind, 0.0, 0.0, 0.0));
-            assert!((14.0..=30.0).contains(&w) && (12.0..=30.0).contains(&h), "{:?}: {}x{}", kind, w, h);
+            assert!((18.0..=38.0).contains(&w) && (16.0..=38.0).contains(&h), "{:?}: {}x{}", kind, w, h);
         }
     }
 
@@ -297,7 +301,9 @@ mod tests {
     #[test]
     fn icons_are_placed_where_asked() {
         let n = numbers(&aircraft(AircraftKind::Light, 100.0, 300.0, 0.0));
-        assert_eq!((n[0], n[1]), (100.0, 293.0));
+        // The light aircraft's nose is 7 units ahead of its centre
+        assert_eq!(n[0], 100.0);
+        assert!((n[1] - (300.0 - 7.0 * ICON_SCALE)).abs() < 0.06, "{}", n[1]);
     }
 
     #[test]

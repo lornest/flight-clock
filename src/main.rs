@@ -1077,7 +1077,7 @@ fn update_radar(
                 hy: hy as f32,
                 trail: model(trail),
                 info: flight_info_label(flight.alt_baro, flight.gs).into(),
-                label_left: *x > 330.0,
+                label_left: *x > 320.0,
                 highlight: closest.as_deref() == Some(flight.hex.as_str()),
             }
         })
@@ -1100,8 +1100,8 @@ fn heading_end(x: f64, y: f64, track: Option<f64>, facing_deg: f64) -> (f64, f64
 }
 
 /// Ring round the closest aircraft when it is drawn as an icon (the largest
-/// icon is about 30 px long)
-const ICON_RING_PX: f32 = 19.0;
+/// icon is about 37 px long)
+const ICON_RING_PX: f32 = 23.0;
 
 /// The outline for this aircraft at (x, y), turned to its track on a display
 /// whose top faces `facing_deg`. Empty when the size class or the track

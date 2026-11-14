@@ -499,12 +499,12 @@ fn main() {
         }
     });
 
-    // --- Clock face (hold the logo) and date (settings screen) ---
+    // --- Clock face (swipe up or down) and date (settings screen) ---
     {
         let ui_handle = ui.as_weak();
-        ui.on_clock_face_toggle_requested(move || {
+        ui.on_face_swiped(move |step| {
             let Some(ui) = ui_handle.upgrade() else { return };
-            let next = if ui.get_clock_face() == "digital" { "analog" } else { "digital" };
+            let next = config::next_clock_face(&ui.get_clock_face(), step.signum());
             ui.set_clock_face(next.into());
             ui.invoke_update_clock();
             save_setting(|cfg| cfg.clock_face = next.to_string());
@@ -931,12 +931,13 @@ fn save_setting(change: impl FnOnce(&mut Config)) {
     }
 }
 
+/// A known face id; the first face for anything else.
 fn normalise_face(face: &str) -> &'static str {
-    if face.eq_ignore_ascii_case("digital") {
-        "digital"
-    } else {
-        "analog"
-    }
+    config::CLOCK_FACES
+        .iter()
+        .find(|f| f.eq_ignore_ascii_case(face))
+        .copied()
+        .unwrap_or(config::CLOCK_FACES[0])
 }
 
 fn desired_poll_interval(ui: &App) -> u64 {
@@ -1321,6 +1322,15 @@ mod tests {
         // Network time switched off: the owner sets the time some other way
         assert!(synced_per_timedatectl("NTP=no\nNTPSynchronized=no\n"));
         assert!(synced_per_timedatectl(""));
+    }
+
+    #[test]
+    fn unknown_faces_fall_back_to_the_first() {
+        assert_eq!(normalise_face("digital"), "digital");
+        assert_eq!(normalise_face("Digital"), "digital");
+        assert_eq!(normalise_face("analog"), "analog");
+        assert_eq!(normalise_face("sundial"), config::CLOCK_FACES[0]);
+        assert_eq!(normalise_face(""), config::CLOCK_FACES[0]);
     }
 
     #[test]

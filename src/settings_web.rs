@@ -30,7 +30,7 @@
 //! never contacts either.
 
 use crate::config::{
-    config_path, parse_hhmm, Config, ACCENTS, ALERT_ALTITUDE_MAX_FT, ALERT_ALTITUDE_MIN_FT, ALERT_GAPS_MIN, BACKGROUNDS,
+    config_path, parse_hhmm, Config, ACCENTS, CLOCK_FACES, ALERT_ALTITUDE_MAX_FT, ALERT_ALTITUDE_MIN_FT, ALERT_GAPS_MIN, BACKGROUNDS,
     FACINGS, NIGHT_MODES, RADIUS_MAX_NM, RADIUS_MIN_NM,
 };
 use crate::ipc::Clock;
@@ -627,10 +627,16 @@ fn apply_place(current: &Config, form: &[(String, String)]) -> Result<Config, St
 fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, String> {
     let mut updated = apply_place(current, form)?;
 
+    // The face is chosen on the clock (swipe up or down), not here. A page
+    // loaded before that change still sends it; a current one doesn't.
     let face = field(form, "clock_face");
-    if face != "analog" && face != "digital" {
+    let face = if face.is_empty() {
+        current.clock_face.clone()
+    } else if CLOCK_FACES.contains(&face.as_str()) {
+        face
+    } else {
         return Err("Pick a clock face.".into());
-    }
+    };
 
     let channel = field(form, "update_channel");
     if channel != "stable" && channel != "beta" {
@@ -727,7 +733,6 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         html = render_update_status(status.as_ref()),
     );
 
-    let face_checked = |f: &str| if cfg.clock_face == f { " checked" } else { "" };
 
     let accent_options: String = ACCENTS
         .iter()
@@ -805,10 +810,7 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
 
   <section class="card">
     <h2 class="label">Clock</h2>
-    <div class="segmented">
-      <label><input type="radio" name="clock_face" value="analog"{analog}><span>Analogue</span></label>
-      <label><input type="radio" name="clock_face" value="digital"{digital}><span>Digital</span></label>
-    </div>
+    <p class="hint">Swipe up or down on the clock to change its face.</p>
     <label class="switch"><input type="checkbox" name="show_date"{date}><span class="track"></span><span>Show the date</span></label>
   </section>
 
@@ -870,8 +872,6 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         night_alerts = if cfg.night_alerts { " checked" } else { "" },
         accent_options = accent_options,
         background_options = background_options,
-        analog = face_checked("analog"),
-        digital = face_checked("digital"),
         date = if cfg.show_date { " checked" } else { "" },
         updates = updates,
         stable = if cfg.update_channel != "beta" { " checked" } else { "" },
@@ -1704,6 +1704,25 @@ mod tests {
         assert!(html.contains("api.postcodes.io"));
         // The search script is plain JS, not a format string: no doubled braces
         assert!(!PLACE_SCRIPT.contains("{{"));
+    }
+
+    #[test]
+    fn the_clock_face_is_not_chosen_on_the_page() {
+        let html = render_settings(&Config::default(), None);
+        assert!(!html.contains(r#"name="clock_face""#));
+        assert!(html.contains("Swipe up or down on the clock"));
+
+        // So saving the page keeps whatever face the clock is on
+        let current = Config { clock_face: "digital".into(), ..Config::default() };
+        let without: Vec<_> = valid().into_iter().filter(|(k, _)| k != "clock_face").collect();
+        assert_eq!(apply_form(&current, &without).unwrap().clock_face, "digital");
+
+        // A page from before the change still sends a face: honoured if valid
+        let mut old = without.clone();
+        old.push(("clock_face".into(), "analog".into()));
+        assert_eq!(apply_form(&current, &old).unwrap().clock_face, "analog");
+        old.last_mut().unwrap().1 = "sundial".into();
+        assert!(apply_form(&current, &old).is_err());
     }
 
     #[test]

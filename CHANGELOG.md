@@ -3,7 +3,7 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
-## [0.3.1] - 2026-11-13
+## [0.3.1] - 2026-11-14
 
 ### Added
 - Tap an aircraft on the radar for its details, full screen: callsign,

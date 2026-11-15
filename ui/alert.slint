@@ -18,6 +18,8 @@ export struct AlertBeacon {
 
 // Data struct for flight detail info shown in the center
 export struct AlertFlightDetail {
+    // Which aircraft, for opening its details when the card is tapped
+    hex: string,
     callsign: string,
     origin-location: string,
     origin-name: string,
@@ -40,8 +42,10 @@ export component Alert inherits Rectangle {
     in property <int> more-count: 0;
 
     callback dismiss();
+    // A flight card was tapped: open that aircraft's details
+    callback card-tapped(string);
 
-    // A tap anywhere dismisses the alert
+    // A tap anywhere off the cards dismisses the alert
     TouchArea {
         clicked => { root.dismiss(); }
     }
@@ -98,7 +102,8 @@ export component Alert inherits Rectangle {
             background: Theme.surface;
             border-radius: 16px;
             border-width: 1px;
-            border-color: Theme.line;
+            // Accent while pressed: the card is a button
+            border-color: card-touch.pressed ? Theme.accent : Theme.line;
             min-width: 300px;
             height: detail.has-route ? 128px : 92px;
 
@@ -179,6 +184,10 @@ export component Alert inherits Rectangle {
                     color: Theme.fg-dim;
                     horizontal-alignment: center;
                 }
+            }
+
+            card-touch := TouchArea {
+                clicked => { root.card-tapped(detail.hex); }
             }
         }
 

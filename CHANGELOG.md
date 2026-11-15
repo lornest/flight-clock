@@ -3,6 +3,14 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
+## [0.3.2] - 2026-11-15
+
+### Added
+- Tap a flight card on an alert to open that aircraft's details, with its
+  route already filled in. Closing the details goes back to the screen the
+  alert was over. A tap anywhere off the cards still dismisses the alert.
+  The card's border lights up in the accent colour while it's pressed.
+
 ## [0.3.1] - 2026-11-13
 
 ### Added

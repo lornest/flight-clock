@@ -11,7 +11,7 @@ section here becomes its GitHub release notes.
   alert was over. A tap anywhere off the cards still dismisses the alert.
   The card's border lights up in the accent colour while it's pressed.
 
-## [0.3.1] - 2026-11-13
+## [0.3.1] - 2026-11-14
 
 ### Added
 - Tap an aircraft on the radar for its details, full screen: callsign,

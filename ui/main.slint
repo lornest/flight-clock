@@ -83,7 +83,7 @@ export component App inherits Window {
     in property <bool> link-first-run: false;
     in property <image> link-qr;
 
-    // One aircraft's details, full screen (tapped on the radar)
+    // One aircraft's details, full screen (tapped on the radar or an alert card)
     in property <bool> detail-active: false;
     in property <FlightDetail> detail;
 
@@ -100,6 +100,8 @@ export component App inherits Window {
     // --- Callbacks to Rust ---
     callback screen-tapped(float, float);
     callback alert-dismissed();
+    // A flight card on the alert was tapped: its details instead of the alert
+    callback alert-card-tapped(string);
     callback direction-selected(string);
     callback direction-selector-closed();
     callback update-clock();
@@ -111,7 +113,7 @@ export component App inherits Window {
     callback show-date-toggled();
     // Pairing code dismissed on the clock
     callback pairing-cancelled();
-    // The details screen was tapped: back to the radar
+    // The details screen was tapped: close it (back to the radar or clock)
     callback detail-closed();
     // Swiped to the clock (0) or the radar (1)
     callback screen-swiped(int);
@@ -213,7 +215,8 @@ export component App inherits Window {
     }
     }
 
-    // One aircraft's details (over the radar; alerts are held back while it's up)
+    // One aircraft's details (over the radar, or the clock when opened from an
+    // alert; alerts are held back while it's up)
     if root.main-ui && root.detail-active: Detail {
         flight: root.detail;
         close => { root.detail-closed(); }
@@ -225,6 +228,7 @@ export component App inherits Window {
         flight-details: root.alert-flight-details;
         more-count: root.alert-more-count;
         dismiss => { root.alert-dismissed(); }
+        card-tapped(hex) => { root.alert-card-tapped(hex); }
     }
 
     // Settings modal (shows over everything)

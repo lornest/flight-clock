@@ -496,6 +496,31 @@ fn main() {
         });
     }
 
+    // --- Alert card tapped: that aircraft's details in place of the alert ---
+    {
+        let ui_handle = ui.as_weak();
+        let alert = alert.clone();
+        let poll_interval = poll_interval.clone();
+        let radar_hits = radar_hits.clone();
+        let location = location.clone();
+        let facing = facing_direction.clone();
+        let prefs = prefs.clone();
+        let follow = follow.clone();
+        let detail_watch = detail_watch.clone();
+        ui.on_alert_card_tapped(move |hex| {
+            let Some(ui) = ui_handle.upgrade() else { return };
+            let target = alert_card_target(&radar_hits.lock().unwrap(), &alert.lock().unwrap().flights, &hex);
+            // The details replace the alert; closing them shows what was underneath
+            end_alert(&ui, &alert, &poll_interval);
+            // Off the radar since the last poll: just dismiss
+            if let (Some((flight, route)), Some(loc)) = (target, *location.lock().unwrap()) {
+                let night = is_night_now(&prefs.lock().unwrap());
+                let facing = facing.lock().unwrap().clone();
+                open_detail(&ui, &flight, Some(&route), loc, &facing, night, &follow, &detail_watch);
+            }
+        });
+    }
+
     // --- Screen tap handler (double-tap navigation) ---
     let ui_handle_tap = ui.as_weak();
     let poll_interval_tap = poll_interval.clone();
@@ -527,17 +552,10 @@ fn main() {
             if ui.get_current_screen() == 1 {
                 let tapped = aircraft_at(&radar_hits.lock().unwrap(), 240.0 + x, 240.0 + y).cloned();
                 if let (Some(flight), Some(loc)) = (tapped, *tap_location.lock().unwrap()) {
-                    let now = chrono::Local::now();
-                    let minute = chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now);
-                    *follow.lock().unwrap() = Some(flight.hex.clone());
-                    *detail_watch.lock().unwrap() = Some(DetailWatch {
-                        opened: Instant::now(),
-                        heard: Instant::now(),
-                        night_at_open: tap_prefs.lock().unwrap().is_night(minute),
-                    });
                     // What the radar knows now; the route follows with the next poll
-                    ui.set_detail(flight_detail(&flight, None, loc, &tap_facing.lock().unwrap()));
-                    ui.set_detail_active(true);
+                    let night = is_night_now(&tap_prefs.lock().unwrap());
+                    let facing = tap_facing.lock().unwrap().clone();
+                    open_detail(&ui, &flight, None, loc, &facing, night, &follow, &detail_watch);
                     last_tap_time.store(0, Ordering::Relaxed);
                     return;
                 }
@@ -1232,6 +1250,45 @@ fn detail_should_close(open_for: Duration, unheard_for: Duration, night: bool, n
     open_for >= DETAIL_OPEN_FOR || unheard_for >= DETAIL_GIVE_UP_AFTER || (night && !night_at_open)
 }
 
+/// The aircraft behind an alert card, as last drawn on the radar, with the
+/// route the alert already found. None if it has left the radar.
+fn alert_card_target(
+    hits: &[(f64, f64, SlimFlight)],
+    alert_flights: &[NewFlightWithInfo],
+    hex: &str,
+) -> Option<(SlimFlight, NewFlightWithInfo)> {
+    let route = alert_flights.iter().find(|f| f.hex == hex)?;
+    let (_, _, flight) = hits.iter().find(|(_, _, f)| f.hex == hex)?;
+    Some((flight.clone(), route.clone()))
+}
+
+fn is_night_now(prefs: &Config) -> bool {
+    let now = chrono::Local::now();
+    prefs.is_night(chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now))
+}
+
+/// Show one aircraft's details and have the poller follow it.
+#[allow(clippy::too_many_arguments)]
+fn open_detail(
+    ui: &App,
+    flight: &SlimFlight,
+    route: Option<&NewFlightWithInfo>,
+    loc: Location,
+    facing_direction: &str,
+    night: bool,
+    follow: &Mutex<Option<String>>,
+    watch: &Mutex<Option<DetailWatch>>,
+) {
+    *follow.lock().unwrap() = Some(flight.hex.clone());
+    *watch.lock().unwrap() = Some(DetailWatch {
+        opened: Instant::now(),
+        heard: Instant::now(),
+        night_at_open: night,
+    });
+    ui.set_detail(flight_detail(flight, route, loc, facing_direction));
+    ui.set_detail_active(true);
+}
+
 fn close_detail(ui: &App, follow: &Mutex<Option<String>>, watch: &Mutex<Option<DetailWatch>>) {
     *follow.lock().unwrap() = None;
     *watch.lock().unwrap() = None;
@@ -1442,6 +1499,7 @@ fn update_alert(
                 .iter()
                 .take(ALERT_MAX_CARDS)
                 .map(|f| AlertFlightDetail {
+                    hex: f.hex.clone().into(),
                     callsign: f.callsign.clone().into(),
                     origin_location: f.origin_location.clone().into(),
                     origin_name: f.origin_name.clone().into(),
@@ -1635,6 +1693,44 @@ mod tests {
         assert_eq!(with_commas(999), "999");
         assert_eq!(with_commas(1_000), "1,000");
         assert_eq!(with_commas(1_234_567), "1,234,567");
+    }
+
+    fn alert_flight(hex: &str) -> NewFlightWithInfo {
+        NewFlightWithInfo {
+            hex: hex.into(),
+            callsign: "BAW283".into(),
+            aircraft_type: "A320".into(),
+            origin_location: "London".into(),
+            origin_name: "Heathrow".into(),
+            destination_location: "Edinburgh".into(),
+            destination_name: "Edinburgh".into(),
+            has_route: true,
+        }
+    }
+
+    #[test]
+    fn alert_card_opens_the_right_aircraft_with_its_route() {
+        let hits = vec![(100.0, 100.0, flight("aaa111", Some(30_000))), (300.0, 300.0, flight("bbb222", Some(4_000)))];
+        let alerts = vec![alert_flight("aaa111"), alert_flight("bbb222")];
+        let (slim, route) = alert_card_target(&hits, &alerts, "bbb222").unwrap();
+        assert_eq!(slim.hex, "bbb222");
+        assert_eq!(slim.alt_baro, Some(4_000));
+        assert_eq!(route.hex, "bbb222");
+
+        // The route goes straight onto the details screen
+        let loc = Location { lat: 51.47, lon: -0.4543, max_radius_nm: 15.0 };
+        let d = flight_detail(&slim, Some(&route), loc, "N");
+        assert_eq!(d.route, "London → Edinburgh");
+        assert!(d.has_route);
+    }
+
+    #[test]
+    fn alert_card_for_aircraft_gone_from_radar_opens_nothing() {
+        let hits = vec![(100.0, 100.0, flight("aaa111", Some(30_000)))];
+        let alerts = vec![alert_flight("aaa111"), alert_flight("bbb222")];
+        assert!(alert_card_target(&hits, &alerts, "bbb222").is_none());
+        // Not part of this alert (e.g. it was dismissed meanwhile)
+        assert!(alert_card_target(&hits, &[], "aaa111").is_none());
     }
 
     #[test]

@@ -28,6 +28,42 @@ pub const NIGHT_MODES: [(&str, &str); 3] = [("off", "Off"), ("dim", "Dim"), ("sc
 pub const ALERT_GAPS_MIN: [u32; 6] = [0, 1, 2, 5, 10, 30];
 pub const ALERT_ALTITUDE_MIN_FT: u32 = 500;
 pub const ALERT_ALTITUDE_MAX_FT: u32 = 60_000;
+pub const ALTITUDE_ORDER_ERROR: &str = "The lowest alert altitude must be below the highest.";
+
+/// Does an aircraft at `altitude_ft` (None: on the ground or not reported)
+/// pass the alert altitude limits? Without a lower limit it counts as low,
+/// so it passes; with one it can't be shown to be above it, so it doesn't.
+pub fn altitude_alerts(altitude_ft: Option<i32>, min_ft: Option<u32>, max_ft: Option<u32>) -> bool {
+    match altitude_ft {
+        None => min_ft.is_none(),
+        Some(alt) => min_ft.is_none_or(|min| alt >= min as i32) && max_ft.is_none_or(|max| alt <= max as i32),
+    }
+}
+
+/// One sentence describing the alert altitude limits, for the settings page.
+/// (The page's script words it the same way as you type.)
+pub fn altitude_summary(min_ft: Option<u32>, max_ft: Option<u32>) -> String {
+    fn ft(n: u32) -> String {
+        let digits = n.to_string();
+        let mut out = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                out.push(',');
+            }
+            out.push(c);
+        }
+        out + " ft"
+    }
+    const GROUND_IN: &str = " Aircraft on the ground or not reporting their altitude are included.";
+    const GROUND_OUT: &str = " Aircraft on the ground or not reporting their altitude are left out.";
+    match (min_ft, max_ft) {
+        (None, None) => "Alerts for aircraft at any altitude.".into(),
+        (None, Some(max)) => format!("Alerts for aircraft up to {}.{}", ft(max), GROUND_IN),
+        (Some(min), None) => format!("Alerts for aircraft from {} up.{}", ft(min), GROUND_OUT),
+        (Some(min), Some(max)) if min >= max => ALTITUDE_ORDER_ERROR.into(),
+        (Some(min), Some(max)) => format!("Alerts for aircraft from {} to {}.{}", ft(min), ft(max), GROUND_OUT),
+    }
+}
 
 /// Backgrounds: (config id, name, ground, surface, date panel). The first is the default.
 pub const BACKGROUNDS: [(&str, &str, &str, &str, &str); 2] = [
@@ -111,6 +147,11 @@ pub struct Config {
     /// New-flight alerts take over the screen. Off: flights only show on the radar.
     #[serde(default = "default_true")]
     pub alerts_enabled: bool,
+    /// Only alert for aircraft at or above this altitude (feet). Unset: no
+    /// lower limit. When set, aircraft on the ground or not reporting an
+    /// altitude don't alert.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert_min_altitude_ft: Option<u32>,
     /// Only alert for aircraft at or below this altitude (feet). Unset: any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alert_max_altitude_ft: Option<u32>,
@@ -186,6 +227,7 @@ impl Default for Config {
             night_end: default_night_end(),
             night_alerts: false,
             alerts_enabled: true,
+            alert_min_altitude_ft: None,
             alert_max_altitude_ft: None,
             alert_min_gap_min: 0,
         }
@@ -258,14 +300,17 @@ impl Config {
         if parse_hhmm(&self.night_start).is_none() || parse_hhmm(&self.night_end).is_none() {
             return Err("Night hours must be times like 22:00.".into());
         }
-        if self
-            .alert_max_altitude_ft
-            .is_some_and(|ft| !(ALERT_ALTITUDE_MIN_FT..=ALERT_ALTITUDE_MAX_FT).contains(&ft))
-        {
+        let out_of_range = |ft: Option<u32>| ft.is_some_and(|ft| !(ALERT_ALTITUDE_MIN_FT..=ALERT_ALTITUDE_MAX_FT).contains(&ft));
+        if out_of_range(self.alert_min_altitude_ft) || out_of_range(self.alert_max_altitude_ft) {
             return Err(format!(
-                "The alert altitude must be between {} and {} feet.",
+                "Alert altitudes must be between {} and {} feet.",
                 ALERT_ALTITUDE_MIN_FT, ALERT_ALTITUDE_MAX_FT
             ));
+        }
+        if let (Some(low), Some(high)) = (self.alert_min_altitude_ft, self.alert_max_altitude_ft) {
+            if low >= high {
+                return Err(ALTITUDE_ORDER_ERROR.into());
+            }
         }
         if self.alert_min_gap_min > 120 {
             return Err("The gap between alerts can be at most 120 minutes.".into());
@@ -505,5 +550,50 @@ mod accent_tests {
         assert_eq!(black.background_hex().0, "#000000");
         let unknown = Config { background: "white".into(), ..Config::default() };
         assert_eq!(unknown.background_hex().0, "#0B1118");
+    }
+}
+
+#[cfg(test)]
+mod altitude_tests {
+    use super::*;
+
+    #[test]
+    fn altitude_limits_match_the_examples() {
+        // A 1,500  B 5,000  C 12,000  D 35,000  E ground  F unknown (both None)
+        let fleet = [Some(1_500), Some(5_000), Some(12_000), Some(35_000), None];
+        let passes = |min, max| fleet.iter().map(|alt| altitude_alerts(*alt, min, max)).collect::<Vec<_>>();
+        assert_eq!(passes(None, None), [true, true, true, true, true]);
+        assert_eq!(passes(None, Some(10_000)), [true, true, false, false, true]);
+        assert_eq!(passes(Some(2_000), None), [false, true, true, true, false]);
+        assert_eq!(passes(Some(2_000), Some(10_000)), [false, true, false, false, false]);
+        assert_eq!(passes(Some(20_000), None), [false, false, false, true, false]);
+        // Limits are inclusive
+        assert!(altitude_alerts(Some(2_000), Some(2_000), Some(10_000)));
+        assert!(altitude_alerts(Some(10_000), Some(2_000), Some(10_000)));
+    }
+
+    #[test]
+    fn altitude_summary_reads_naturally() {
+        assert_eq!(altitude_summary(None, None), "Alerts for aircraft at any altitude.");
+        assert!(altitude_summary(None, Some(10_000)).starts_with("Alerts for aircraft up to 10,000 ft. "));
+        assert!(altitude_summary(None, Some(10_000)).ends_with("are included."));
+        assert!(altitude_summary(Some(2_000), None).starts_with("Alerts for aircraft from 2,000 ft up. "));
+        assert!(altitude_summary(Some(2_000), Some(10_000)).starts_with("Alerts for aircraft from 2,000 ft to 10,000 ft. "));
+        assert!(altitude_summary(Some(2_000), Some(10_000)).ends_with("are left out."));
+        assert_eq!(altitude_summary(Some(500), Some(500)), ALTITUDE_ORDER_ERROR);
+    }
+
+    #[test]
+    fn altitude_limits_validate() {
+        let ok = Config { alert_min_altitude_ft: Some(2_000), alert_max_altitude_ft: Some(10_000), ..Config::default() };
+        assert!(ok.validate().is_ok());
+        let crossed = Config { alert_min_altitude_ft: Some(10_000), alert_max_altitude_ft: Some(2_000), ..Config::default() };
+        assert!(crossed.validate().is_err());
+        let equal = Config { alert_min_altitude_ft: Some(5_000), alert_max_altitude_ft: Some(5_000), ..Config::default() };
+        assert!(equal.validate().is_err());
+        assert!(Config { alert_min_altitude_ft: Some(100), ..Config::default() }.validate().is_err());
+        // Older configs have neither
+        let old: Config = serde_json::from_str(r#"{"alert_max_altitude_ft":8000}"#).unwrap();
+        assert_eq!((old.alert_min_altitude_ft, old.alert_max_altitude_ft), (None, Some(8000)));
     }
 }

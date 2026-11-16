@@ -30,8 +30,8 @@
 //! never contacts either.
 
 use crate::config::{
-    config_path, parse_hhmm, Config, ACCENTS, CLOCK_FACES, ALERT_ALTITUDE_MAX_FT, ALERT_ALTITUDE_MIN_FT, ALERT_GAPS_MIN, BACKGROUNDS,
-    FACINGS, NIGHT_MODES, RADIUS_MAX_NM, RADIUS_MIN_NM,
+    altitude_summary, config_path, parse_hhmm, Config, ACCENTS, CLOCK_FACES, ALERT_ALTITUDE_MAX_FT, ALERT_ALTITUDE_MIN_FT,
+    ALERT_GAPS_MIN, ALTITUDE_ORDER_ERROR, BACKGROUNDS, FACINGS, NIGHT_MODES, RADIUS_MAX_NM, RADIUS_MIN_NM,
 };
 use crate::ipc::Clock;
 use crate::update;
@@ -676,21 +676,29 @@ fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, Str
         if parse_hhmm(&start).is_none() || parse_hhmm(&end).is_none() {
             return Err("Night hours must be times like 22:00.".into());
         }
-        let altitude = field(form, "alert_max_altitude_ft");
-        let altitude = match altitude.trim() {
-            "" => None,
-            text => Some(
-                text.parse::<u32>()
+        // Empty: no limit on that side
+        let altitude = |name: &str| -> Result<Option<u32>, String> {
+            match field(form, name).trim() {
+                "" => Ok(None),
+                text => text
+                    .parse::<u32>()
                     .ok()
                     .filter(|ft| (ALERT_ALTITUDE_MIN_FT..=ALERT_ALTITUDE_MAX_FT).contains(ft))
+                    .map(Some)
                     .ok_or_else(|| {
                         format!(
-                            "The alert altitude must be between {} and {} feet, or empty for any.",
+                            "Alert altitudes must be between {} and {} feet, or empty for no limit.",
                             ALERT_ALTITUDE_MIN_FT, ALERT_ALTITUDE_MAX_FT
                         )
-                    })?,
-            ),
+                    }),
+            }
         };
+        let (altitude_min, altitude_max) = (altitude("alert_min_altitude_ft")?, altitude("alert_max_altitude_ft")?);
+        if let (Some(low), Some(high)) = (altitude_min, altitude_max) {
+            if low >= high {
+                return Err(ALTITUDE_ORDER_ERROR.into());
+            }
+        }
         let gap = field(form, "alert_min_gap_min")
             .parse::<u32>()
             .ok()
@@ -702,7 +710,8 @@ fn apply_form(current: &Config, form: &[(String, String)]) -> Result<Config, Str
         updated.night_end = end;
         updated.night_alerts = form.iter().any(|(k, _)| k == "night_alerts");
         updated.alerts_enabled = form.iter().any(|(k, _)| k == "alerts_enabled");
-        updated.alert_max_altitude_ft = altitude;
+        updated.alert_min_altitude_ft = altitude_min;
+        updated.alert_max_altitude_ft = altitude_max;
         updated.alert_min_gap_min = gap;
     }
 
@@ -788,8 +797,16 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
     <h2 class="label">Alerts</h2>
     <input type="hidden" name="has_night_and_alerts" value="1">
     <label class="switch"><input type="checkbox" name="alerts_enabled"{alerts}><span class="track"></span><span>Show new flights full screen</span></label>
-    <div class="field"><label class="label" for="alert_max_altitude_ft">Only below (feet)</label>
-      <input id="alert_max_altitude_ft" name="alert_max_altitude_ft" type="number" inputmode="numeric" min="{alt_min}" max="{alt_max}" step="500" value="{altitude}" placeholder="Any altitude"></div>
+    <div class="field">
+      <h3 class="label">Altitude</h3>
+      <div class="row">
+        <div class="field"><label class="hint" for="alert_min_altitude_ft">From (ft)</label>
+          <input id="alert_min_altitude_ft" name="alert_min_altitude_ft" type="number" inputmode="numeric" min="{alt_min}" max="{alt_max}" step="500" value="{altitude_low}" placeholder="Ground"></div>
+        <div class="field"><label class="hint" for="alert_max_altitude_ft">Up to (ft)</label>
+          <input id="alert_max_altitude_ft" name="alert_max_altitude_ft" type="number" inputmode="numeric" min="{alt_min}" max="{alt_max}" step="500" value="{altitude}" placeholder="Any height"></div>
+      </div>
+      <p class="hint{alt_summary_bad}" id="alt-summary" aria-live="polite">{alt_summary}</p>
+    </div>
     <div class="field"><label class="label" for="alert_min_gap_min">At most one alert every</label>
       <select id="alert_min_gap_min" name="alert_min_gap_min">{gap_options}</select></div>
     <p class="hint">Flights always show on the radar.</p>
@@ -856,6 +873,31 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
       s.setProperty('--surface', r.dataset.surface);
     }});
   }});
+  // Alert altitude: say what the two boxes add up to as they're typed in.
+  // Same wording as config::altitude_summary on the clock.
+  var altLow = document.getElementById('alert_min_altitude_ft');
+  var altHigh = document.getElementById('alert_max_altitude_ft');
+  var altSummary = document.getElementById('alt-summary');
+  function feet(v) {{ return Number(v).toLocaleString('en-GB') + ' ft'; }}
+  function describeAltitude() {{
+    var low = altLow.value.trim(), high = altHigh.value.trim();
+    var included = ' Aircraft on the ground or not reporting their altitude are included.';
+    var left = ' Aircraft on the ground or not reporting their altitude are left out.';
+    var bad = low !== '' && high !== '' && Number(low) >= Number(high);
+    var text;
+    if (bad) text = '{alt_order_error}';
+    else if (low === '' && high === '') text = 'Alerts for aircraft at any altitude.';
+    else if (low === '') text = 'Alerts for aircraft up to ' + feet(high) + '.' + included;
+    else if (high === '') text = 'Alerts for aircraft from ' + feet(low) + ' up.' + left;
+    else text = 'Alerts for aircraft from ' + feet(low) + ' to ' + feet(high) + '.' + left;
+    altSummary.textContent = text;
+    altSummary.classList.toggle('bad', bad);
+    // Stops Save until it's fixed
+    altLow.setCustomValidity(bad ? '{alt_order_error}' : '');
+  }}
+  altLow.addEventListener('input', describeAltitude);
+  altHigh.addEventListener('input', describeAltitude);
+  describeAltitude();
 }})();
 </script>"#,
         banner = banner,
@@ -865,6 +907,10 @@ fn render_settings(cfg: &Config, banner: Option<Banner>) -> String {
         gap_options = gap_options,
         alerts = if cfg.alerts_enabled { " checked" } else { "" },
         altitude = cfg.alert_max_altitude_ft.map(|ft| ft.to_string()).unwrap_or_default(),
+        altitude_low = cfg.alert_min_altitude_ft.map(|ft| ft.to_string()).unwrap_or_default(),
+        alt_summary = html_escape(&altitude_summary(cfg.alert_min_altitude_ft, cfg.alert_max_altitude_ft)),
+        alt_summary_bad = if cfg.alert_min_altitude_ft.zip(cfg.alert_max_altitude_ft).is_some_and(|(l, h)| l >= h) { " bad" } else { "" },
+        alt_order_error = ALTITUDE_ORDER_ERROR,
         alt_min = ALERT_ALTITUDE_MIN_FT,
         alt_max = ALERT_ALTITUDE_MAX_FT,
         night_start = html_escape(&cfg.night_start),
@@ -1162,7 +1208,7 @@ header{{text-align:center;margin:8px 0 24px}}
 .stack{{display:flex;flex-direction:column;gap:16px}}
 .card{{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px}}
 .lead{{font-size:17px}}
-.hint{{font-size:13px;color:var(--dim)}}a.hint{{color:var(--soft)}}
+.hint{{font-size:13px;color:var(--dim)}}a.hint{{color:var(--soft)}}.hint.bad{{color:var(--error)}}
 .row{{display:flex;gap:10px;align-items:flex-end}}.row>*{{flex:1;min-width:0}}
 .field{{display:flex;flex-direction:column;gap:6px}}
 input:not([type=radio]):not([type=checkbox]),select{{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font:inherit;font-size:16px;color-scheme:dark}}
@@ -1743,6 +1789,8 @@ mod tests {
         // The alerts switch wasn't sent: off
         assert!(!cfg.alerts_enabled);
         assert_eq!((cfg.alert_max_altitude_ft, cfg.alert_min_gap_min), (Some(10000), 5));
+        // The lower limit wasn't sent: none
+        assert_eq!(cfg.alert_min_altitude_ft, None);
         assert!(cfg.validate().is_ok());
 
         // Empty altitude means any
@@ -1756,6 +1804,48 @@ mod tests {
             g[i].1 = bad.into();
             assert!(apply_form(&Config::default(), &g).is_err(), "{}={}", name, bad);
         }
+    }
+
+    #[test]
+    fn applies_alert_altitude_band() {
+        let mut f = valid();
+        f.extend(form(&[
+            ("has_night_and_alerts", "1"),
+            ("night_mode", "off"),
+            ("night_start", "22:00"),
+            ("night_end", "07:00"),
+            ("alert_min_altitude_ft", "2000"),
+            ("alert_max_altitude_ft", "10000"),
+            ("alert_min_gap_min", "0"),
+        ]));
+        let cfg = apply_form(&Config::default(), &f).unwrap();
+        assert_eq!((cfg.alert_min_altitude_ft, cfg.alert_max_altitude_ft), (Some(2000), Some(10000)));
+        assert!(cfg.validate().is_ok());
+
+        let set = |low: &str, high: &str| {
+            let mut g = f.clone();
+            for (name, value) in [("alert_min_altitude_ft", low), ("alert_max_altitude_ft", high)] {
+                let i = g.iter().position(|(k, _)| k == name).unwrap();
+                g[i].1 = value.into();
+            }
+            apply_form(&Config::default(), &g)
+        };
+        // Only a lower limit
+        assert_eq!(set("2000", "").unwrap().alert_min_altitude_ft, Some(2000));
+        // Crossed or equal limits, and out of range
+        assert_eq!(set("10000", "2000").unwrap_err(), ALTITUDE_ORDER_ERROR);
+        assert!(set("5000", "5000").is_err());
+        assert!(set("100", "").is_err());
+    }
+
+    #[test]
+    fn settings_page_explains_the_altitude_limits() {
+        let cfg = Config { alert_min_altitude_ft: Some(2000), alert_max_altitude_ft: Some(10000), ..Config::default() };
+        let html = render_settings(&cfg, None);
+        assert!(html.contains(r#"name="alert_min_altitude_ft" type="number" inputmode="numeric" min="500" max="60000" step="500" value="2000" placeholder="Ground""#));
+        assert!(html.contains("Alerts for aircraft from 2,000 ft to 10,000 ft. Aircraft on the ground or not reporting their altitude are left out."));
+        let html = render_settings(&Config::default(), None);
+        assert!(html.contains(r#"id="alt-summary" aria-live="polite">Alerts for aircraft at any altitude.</p>"#));
     }
 
     #[test]

@@ -1032,9 +1032,8 @@ fn set_backlight(on: bool) {
 }
 
 /// The new flights worth an alert under the owner's settings: none with
-/// alerts off, or at night unless allowed then; otherwise those at or below
-/// the altitude limit (an aircraft with no altitude, i.e. on the ground,
-/// counts as low).
+/// alerts off, or at night unless allowed then; otherwise those within the
+/// altitude limits (see `config::altitude_alerts` for aircraft with no altitude).
 fn flights_to_alert<'a>(cfg: &Config, state: &'a FlightState, night: bool) -> Vec<&'a NewFlightWithInfo> {
     if !cfg.alerts_enabled || (night && !cfg.night_alerts) {
         return Vec::new();
@@ -1042,14 +1041,9 @@ fn flights_to_alert<'a>(cfg: &Config, state: &'a FlightState, night: bool) -> Ve
     state
         .new_flights_with_info
         .iter()
-        .filter(|new| match cfg.alert_max_altitude_ft {
-            None => true,
-            Some(max) => state
-                .flights
-                .iter()
-                .find(|f| f.hex == new.hex)
-                .and_then(|f| f.alt_baro)
-                .is_none_or(|alt| alt <= max as i32),
+        .filter(|new| {
+            let altitude = state.flights.iter().find(|f| f.hex == new.hex).and_then(|f| f.alt_baro);
+            config::altitude_alerts(altitude, cfg.alert_min_altitude_ft, cfg.alert_max_altitude_ft)
         })
         .collect()
 }
@@ -1619,6 +1613,12 @@ mod tests {
 
         let low_only = Config { alert_max_altitude_ft: Some(5000), ..Config::default() };
         assert_eq!(alerted(&low_only, false), ["low", "ground"]);
+
+        // A lower limit leaves out the aircraft on the ground
+        let high_only = Config { alert_min_altitude_ft: Some(5000), ..Config::default() };
+        assert_eq!(alerted(&high_only, false), ["high"]);
+        let band = Config { alert_min_altitude_ft: Some(2000), alert_max_altitude_ft: Some(10000), ..Config::default() };
+        assert_eq!(alerted(&band, false), ["low"]);
     }
 
     #[test]

@@ -3,6 +3,16 @@
 Versions follow [semantic versioning](https://semver.org). Each release's
 section here becomes its GitHub release notes.
 
+## [0.3.3] - 2026-11-16
+
+### Added
+- Alerts can have a lower altitude limit as well as an upper one: **From**
+  and **Up to** on the settings page, either or both. A sentence under them
+  says what the limits add up to as you type. With a lower limit, aircraft
+  on the ground or not reporting their altitude don't alert; with only an
+  upper limit they still do. An existing "Only below" setting becomes
+  **Up to**.
+
 ## [0.3.2] - 2026-11-15
 
 ### Added
